@@ -1,0 +1,11 @@
+[Unit]
+Description=Scan for offline peers every five minutes
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=5min
+Persistent=true
+Unit=offline-peer-sync.service
+
+[Install]
+WantedBy=timers.target
