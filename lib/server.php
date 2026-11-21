@@ -85,10 +85,14 @@ function command_server(array $args): int
             return 0;
         }
         $known = read_json(path('peers'))['peers'] ?? [];
-        table(['Server', 'Port', 'Access', 'Last sync'], array_map(static function (array $s) use ($known): array {
+        table(['Server', 'Port', 'Access', 'Key accepted', 'Last sync finished'], array_map(static function (array $s) use ($known): array {
             $entry = $known[peer_key($s['host'], $s['port'])] ?? [];
-            return [$s['host'], (string) $s['port'], $entry['auth'] ?? 'not yet contacted', utc_display($entry['last_sync'] ?? null)];
+            return [$s['host'], (string) $s['port'], $entry['auth'] ?? 'not yet contacted', utc_display($entry['last_contact'] ?? null), utc_display($entry['last_sync'] ?? null)];
         }, $servers));
+        $running = sync_in_progress(read_json(path('peers')));
+        if ($running !== null) {
+            out('A sync is running now, since ' . utc_display($running['started']) . ': ' . printable($running['stage'], 160) . '.');
+        }
         return 0;
     }
 
@@ -97,6 +101,8 @@ function command_server(array $args): int
         $failed = 0;
         foreach ($servers as $server) {
             $listing = remote_listing(['address' => $server['host'], 'port' => $server['port']], 'knowledge');
+            // What the test found is kept, so that the health check and the portal say the same as this line does.
+            note_peer(peer_key($server['host'], $server['port']), ['name' => $server['host'], 'method' => 'server'], $listing['ok'] ? 'ok' : $listing['auth'], $listing['ok'] ? '' : $listing['error']);
             out('  ' . state_mark($listing['ok'] ? 'ok' : 'fail') . ' ' . $server['host'] . ': ' . ($listing['ok'] ? 'reachable, key accepted, ' . plural(count($listing['files']), 'library file') . ' on offer' : $listing['error']));
             $failed += $listing['ok'] ? 0 : 1;
         }
@@ -242,7 +248,7 @@ function queue_summary(): array
         'staging_bytes' => $staging['bytes'],
         'items' => array_map(static fn (array $i): array => [
             'id' => $i['id'], 'kind' => $i['kind'], 'state' => $i['state'], 'to' => $i['kind'] === 'site' ? 'library' : 'media/' . $i['to'],
-            'what' => $i['kind'] === 'site' ? (string) $i['title'] : (string) (parse_url((string) $i['url'], PHP_URL_HOST) ?: ''),
+            'what' => $i['kind'] === 'site' || isset($i['book']) ? (string) $i['title'] : (string) (parse_url((string) $i['url'], PHP_URL_HOST) ?: ''),
             'message' => (string) $i['message'], 'added' => (string) ($i['added'] ?? ''),
         ], \array_slice(array_reverse($items), 0, 25)),
     ];
@@ -253,17 +259,38 @@ function staging_dir(string $id): string
     return path('staging') . '/' . $id;
 }
 
+/** Remove one item's staging folder, and only ever a folder named by a well-formed id. */
+function staging_discard(string $id): void
+{
+    if (preg_match('/^[0-9a-f]{8}$/', $id) === 1) {
+        run(['rm', '-rf', '--', staging_dir($id)], 60);
+    }
+}
+
 /** Fetch one queued video, audio or file into its staging folder. */
 function queue_fetch(array $item): array
 {
     $dir = staging_dir($item['id']);
     @mkdir($dir, 02770, true);
     if ($item['kind'] === 'file') {
-        $code = run_live([
+        $book = isset($item['book']);
+        if ($book && preg_match('/^[a-z][a-z0-9-]{1,40}\.(pdf|epub)$/', (string) ($item['file'] ?? '')) !== 1) {
+            return ['failed', 'the book has no usable file name'];
+        }
+        $code = run_live(array_merge([
             'aria2c', '--no-conf', '--dir=' . $dir, '--check-certificate=true', '--continue=true', '--auto-file-renaming=false',
             '--file-allocation=none', '--max-connection-per-server=4', '--max-tries=5', '--retry-wait=10', '--timeout=60',
-            '--console-log-level=warn', '--summary-interval=0', '--user-agent=offline/' . VERSION, '--', $item['url'],
-        ]);
+            '--console-log-level=warn', '--summary-interval=0', '--user-agent=offline/' . VERSION,
+        ], $book ? ['--out=' . $item['file'], '--allow-overwrite=true'] : [],
+            $book && book_pinned($item) ? ['--checksum=sha-256=' . $item['sha256']] : [], ['--', $item['url']]));
+        if ($book) {
+            // The downloader's own check is a convenience. This one decides.
+            $problem = book_problem($dir . '/' . $item['file'], $item);
+            if ($problem !== null) {
+                staging_discard((string) $item['id']);
+                return ['failed', "discarded: $problem"];
+            }
+        }
     } else {
         $command = [
             'yt-dlp', '--ignore-config', '--no-progress', '--restrict-filenames', '--no-overwrites', '--no-exec',
@@ -343,6 +370,30 @@ function stage_publish(array $item): array
     $dir = staging_dir($item['id']);
     $published = 0;
     $skipped = 0;
+    if (isset($item['book'])) {
+        // Staging is writable for as long as a file waits there, so a book is held to
+        // its line again at the moment it is released, and it alone is released.
+        $file = $dir . '/' . basename((string) ($item['file'] ?? ''));
+        $shelf = str_starts_with((string) $item['to'], 'books/') ? substr((string) $item['to'], 6) : '';
+        $problem = book_shelf_ok($shelf) ? book_problem($file, $item) : 'its shelf is not a folder of books';
+        if ($problem !== null) {
+            staging_discard((string) $item['id']);
+            queue_mark($item['id'], 'failed', "discarded: $problem");
+            return [0, 1];
+        }
+        $target = path('media') . '/' . $item['to'] . '/' . basename($file);
+        if (file_exists($target)) {
+            return [0, 1];
+        }
+        @mkdir(dirname($target), 02775, true);
+        if (@rename($file, $target) || (@copy($file, $target) && @unlink($file))) {
+            @chmod($target, 0664);
+            queue_mark($item['id'], 'published', 'checked and published to media/' . $item['to']);
+            staging_discard((string) $item['id']);
+            return [1, 0];
+        }
+        return [0, 1];
+    }
     $stack = [$dir];
     while ($stack !== []) {
         $current = array_pop($stack);
@@ -387,12 +438,13 @@ function command_queue(array $args): int
             out('The download queue is empty.');
         } else {
             table(['Id', 'Kind', 'State', 'To', 'What', 'Result'], array_map(static fn (array $i): array => [
-                $i['id'], $i['kind'], $i['state'], $i['kind'] === 'site' ? 'library' : 'media/' . $i['to'], printable($i['kind'] === 'site' ? $i['title'] : $i['url'], 60), printable($i['message'], 60),
+                $i['id'], $i['kind'], $i['state'], $i['kind'] === 'site' ? 'library' : 'media/' . $i['to'], printable($i['kind'] === 'site' || isset($i['book']) ? $i['title'] : $i['url'], 60), printable($i['message'], 60),
             ], $items));
         }
         out();
         out('Add with: sudo offline queue add URL [--to movies|tv|music|radio|books|children] [--audio]');
         out('          sudo offline queue site NAME|GROUP   (see: offline queue sites)');
+        out('          sudo offline books get NAME|SHELF    (see: offline books)');
         return 0;
     }
 
@@ -549,7 +601,8 @@ function command_queue(array $args): int
             queue_mark($item['id'], $item['state'], $message);
             out("  {$item['state']}: $message");
         }
-        if ($item['state'] === 'staged' && config_bool('STAGING_AUTOPUBLISH')) {
+        // A book held to a checksum was reviewed when its line was written; it needs no second look.
+        if ($item['state'] === 'staged' && (config_bool('STAGING_AUTOPUBLISH') || (isset($item['book']) && book_pinned($item)))) {
             $published += stage_publish($item)[0];
         }
     }
@@ -573,7 +626,7 @@ function command_stage(array $args): int
             return 0;
         }
         foreach ($staged as $item) {
-            heading("{$item['id']}  " . printable($item['kind'] === 'site' ? $item['title'] : $item['url'], 90));
+            heading("{$item['id']}  " . printable($item['kind'] === 'site' || isset($item['book']) ? $item['title'] : $item['url'], 90));
             $dir = staging_dir($item['id']);
             $iterator = is_dir($dir) && is_readable($dir) ? new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($dir, \FilesystemIterator::SKIP_DOTS)) : [];
             foreach ($iterator as $file) {
@@ -611,7 +664,7 @@ function command_stage(array $args): int
             $count++;
             continue;
         }
-        if ($to !== null && $item['kind'] !== 'site') {
+        if ($to !== null && $item['kind'] !== 'site' && !isset($item['book'])) {
             $item['to'] = $to;
         }
         [$published, $skipped] = stage_publish($item);

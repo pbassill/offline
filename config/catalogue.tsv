@@ -112,3 +112,18 @@ children	prunelle_en_interactive-books	Prunelle books	Interactive picture books.
 children	ted_mul_kids	TED for children	TED talks chosen for children.	3789
 children-extra	booksdash_en_all	Book Dash	Picture books for young children, free to copy.	11162
 children-extra	ted_mul_ted-ed	TED-Ed	Animated lessons on science, history and language.	6042
+# Cooking over fire. The outdoor-cooking pack is what Kiwix publishes ready-made that
+# bears on it; outdoor-cooking-extra adds the two large open collections that hold the
+# most recipes. The books themselves, Dutch-oven and one-pot cooking first, are fetched
+# with "sudo offline books get outdoor-cooking", and the recipe sites are archived by a
+# server with "sudo offline queue site cooking".
+outdoor-cooking	cooking.stackexchange.com_en_all	Cooking Q&A	Answered questions on technique, food safety, substitutions and cooking over fire.	227
+outdoor-cooking	outdoors.stackexchange.com_en_all	The Great Outdoors Q&A	Answered questions on camp cooking, fires, stoves and living outdoors.	135
+outdoor-cooking	zimgit-food-preparation_en	Food for Preppers	Recipes and techniques for preparing and preserving food.	93
+outdoor-cooking	publicdomainrecipes.com_en_all	Public Domain Recipes	A community recipe collection, free to copy.	17
+outdoor-cooking	based.cooking_en_all	Based.Cooking	Simple, practical recipes from the community.	22
+outdoor-cooking	foss.cooking_en_all	FOSS Cooking	Quick and easy cooking guides and recipes.	29
+outdoor-cooking	grimgrains_en_all	Grimgrains	Plant-based recipes cooked in one pot aboard a small boat.	26
+outdoor-cooking	scoutwiki.org_en_all_maxi	ScoutWiki	Scouting skills: fires, camp kitchens and cooking without utensils.	25
+outdoor-cooking-extra	wikibooks_en_all_maxi	Wikibooks (With Images)	Holds the Wikibooks Cookbook: thousands of recipes, with its pages on Dutch-oven, campfire and barbecue cooking.	4520
+outdoor-cooking-extra	gutenberg_en_lcc-t	Project Gutenberg: Technology	Every Project Gutenberg book classed under technology, which is where it files cookery: hundreds of cookery books, the old camp cookery manuals among them.	9114
