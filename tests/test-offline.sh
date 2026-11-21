@@ -83,7 +83,7 @@ for unit in "$ROOT"/systemd/*.service; do
   fi
   case "$name" in
     # These act on the system itself: the firewall table, login accounts, this system's certificate.
-    offline-children-guard.service | offline-accounts.service | offline-tls-renew.service)
+    offline-children-guard.service | offline-accounts.service | offline-tls-renew.service | offline-net.service)
       check "$name, which must be root, is held to named capabilities" grep -Eq '^CapabilityBoundingSet=CAP_[A-Z_ ]+$' "$unit" ;;
     offline-sessions.service)
       check "$name runs as the sign-in account" grep -q '^User=offline-auth$' "$unit" ;;
@@ -153,6 +153,32 @@ check "every page is for adults unless listed as public" grep -q "portal_require
 check "an application with no sign-in of its own is put behind the portal's, over TLS" php -r 'require $argv[1] . "/lib/cli.php"; define("X", 1); $apps = Offline\app_index(); foreach (["cyberchef", "it-tools", "stirling-pdf", "translate", "meshtastic-web", "meshcore-web"] as $id) { $c = Offline\app_proxy_config($apps[$id]); if ($apps[$id]["scheme"] !== "https" || !str_contains($c, "Require env OFFLINE_ADULT") || !str_contains($c, "session-gate.conf") || !str_contains($c, "SSLEngine on")) { fwrite(STDERR, $id); exit(1); } } exit(0);' "$ROOT"
 # shellcheck disable=SC2016
 check "an application with its own sign-in keeps to it" php -r 'require $argv[1] . "/lib/cli.php"; $apps = Offline\app_index(); foreach (["jellyfin", "vaultwarden", "kolibri", "excalidraw"] as $id) { if (str_contains(Offline\app_proxy_config($apps[$id]), "OFFLINE_ADULT")) { exit(1); } } exit($apps["kolibri"]["audience"] === "all" && $apps["jellyfin"]["audience"] === "own" ? 0 : 1);' "$ROOT"
+
+# The private network.
+check "Reticulum is pinned by version and by the checksum of its wheel" bash -c "grep -Eq \"^const RNS_VERSION = '[0-9]+\\.[0-9]+\\.[0-9]+';\" '$ROOT/lib/net.php' && grep -Eq \"^const RNS_WHEEL_SHA256 = '[0-9a-f]{64}';\" '$ROOT/lib/net.php' && grep -q -- \"'--require-hashes'\" '$ROOT/lib/net.php' && grep -q -- \"'--no-deps'\" '$ROOT/lib/net.php'"
+check "the list of systems is offered read-only, one file and nothing else" bash -c "sed -n '/^\\[network\\]/,/^\\[broadcasts\\]/p' '$ROOT/config/rsyncd.conf' | grep -q 'include = /nodes.json' && sed -n '/^\\[network\\]/,/^\\[broadcasts\\]/p' '$ROOT/config/rsyncd.conf' | grep -q 'exclude = \\*'"
+check "the web server admits the private network wherever it admits the home network" bash -c "[[ \$(grep -c '<IfDefine OFFLINE_LAN>' '$ROOT/config/apache-offline-portal-common.conf' '$ROOT/config/apache-offline-portal.conf' | awk -F: '{n += \$2} END {print n}') -eq \$(grep -c 'Require ip 10.47.0.0/16' '$ROOT/config/apache-offline-portal-common.conf' '$ROOT/config/apache-offline-portal.conf' | awk -F: '{n += \$2} END {print n}') ]]"
+check "packet radio is off unless switched on" bash -c "grep -q '^MESH_PACKET=no' '$ROOT/config/offline.conf' && grep -q \"'MESH_PACKET' => 'no'\" '$ROOT/lib/core.php'"
+check "the radio defaults are the licence-exempt 25 mW and one per cent" bash -c "grep -q '^MESH_LORA_TXPOWER=14' '$ROOT/config/offline.conf' && grep -q '^MESH_LORA_AIRTIME_PERCENT=1' '$ROOT/config/offline.conf'"
+check "the radio layer runs as the unprivileged account, with serial devices and nothing else from /dev" bash -c "grep -q '^User=offline$' '$ROOT/systemd/offline-mesh.service' && grep -q '^DevicePolicy=closed$' '$ROOT/systemd/offline-mesh.service' && grep -q '^DeviceAllow=char-ttyACM rw$' '$ROOT/systemd/offline-mesh.service'"
+refute "the radio layer cannot reach a public address" grep -Eq '^IPAddressAllow=.*(any|0\.0\.0\.0/0)' "$ROOT/systemd/offline-mesh.service"
+if have python3; then
+  check "the broadcast bridge is valid Python" python3 -c 'import ast, sys; ast.parse(open(sys.argv[1]).read())' "$ROOT/mesh/offline-mesh-bridge"
+  check "the bridge accepts only what could be a broadcast, however it is packed" python3 -c '
+import importlib.machinery, importlib.util, json, sys, zlib
+loader = importlib.machinery.SourceFileLoader("bridge", sys.argv[1])
+bridge = importlib.util.module_from_spec(importlib.util.spec_from_loader("bridge", loader)); loader.exec_module(bridge)
+good = json.dumps({"v": 1, "id": "20261121T103215Z-ea924c63", "text": "Kettle is on " * 20}).encode()
+assert bridge.unpack(bridge.pack(good)) == ("20261121T103215Z-ea924c63", good)
+assert bridge.pack(good)[:1] == bridge.PACKED and bridge.unpack(bridge.RAW + good)[1] == good
+for bad in [b"", b"\x01", b"\x03" + good, bridge.RAW + b"not json", bridge.RAW + json.dumps({"id": "../../etc/passwd"}).encode(), bridge.RAW + json.dumps(["20261121T103215Z-ea924c63"]).encode(),
+            bridge.RAW + json.dumps({"id": 7}).encode(), bridge.PACKED + b"not zlib", bridge.PACKED + zlib.compress(b"x" * 1000000), bridge.RAW + b"{" + b" " * 5000 + b"}"]:
+    assert bridge.unpack(bad) is None, bad[:20]
+assert bridge.derived("ABCDE", "purpose").hex() == sys.argv[2]
+' "$ROOT/mesh/offline-mesh-bridge" "$(php -r 'echo hash_hmac("sha256", "purpose", "ABCDE");')"
+else
+  note "python3 not installed: the broadcast bridge not checked"
+fi
 
 # Every application unit must keep the three rules in lib/apps.php.
 APP_COUNT=0
@@ -551,6 +577,80 @@ check "a title is on the shelf only if it is listed" php -r 'define("OFFLINE_PRE
 # shellcheck disable=SC2016
 check "only the children's folder of the media counts as theirs" php -r 'require $argv[1] . "/lib/core.php"; exit(Offline\is_children_media("children") && Offline\is_children_media("children/films") && !Offline\is_children_media("childrens") && !Offline\is_children_media("movies") && !Offline\is_children_media("movies/children") && !Offline\is_children_media("") ? 0 : 1);' "$ROOT"
 check "the catalogue has a children's pack, all of it on the shelf" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' catalogue children | grep -q Vikidia && for base in \$(awk -F'\t' '\$1 ~ /^children/ {print \$2}' '$ROOT/config/catalogue.tsv'); do php -r 'require \$argv[1] . \"/lib/core.php\"; exit(Offline\\is_children_title(\$argv[2]) ? 0 : 1);' '$ROOT' \"\$base\" || exit 1; done"
+
+echo
+echo "Private network"
+if php -r 'exit(function_exists("sodium_crypto_box_keypair") ? 0 : 1);'; then
+  check "before joining, the command says how" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' net | grep -q 'sudo offline net join'"
+  check "a system can join" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' net join | grep -Eq 'on the private network as 10\.47\.[0-9]+\.[0-9]+\.'"
+  check "its private key is private" bash -c "[[ \$(stat -c %a '$A/etc/offline/net/private.key') == 600 ]]"
+  refute "the list of systems holds no private key" grep -q "$(cat "$A/etc/offline/net/private.key")" "$A/var/lib/offline/network/nodes.json"
+  check "joining again keeps the same key and address" bash -c "before=\$(cat '$A/etc/offline/net/public.key'); OFFLINE_PREFIX='$A' '$ROOT/bin/offline' net join >/dev/null; [[ \"\$before\" == \"\$(cat '$A/etc/offline/net/public.key')\" ]]"
+  if have wg; then
+    check "WireGuard derives the same public key from the private one" bash -c "[[ \"\$(wg pubkey <'$A/etc/offline/net/private.key')\" == \"\$(cat '$A/etc/offline/net/public.key')\" ]]"
+  fi
+  check "a system that can be called says where" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' net endpoint files.example.org:51820 >/dev/null && grep -q '^ListenPort = 51820' '$A/etc/wireguard/offline0.conf'"
+  for bad in 'files.example.org' '-oProxyCommand=x:22' 'host:0' 'host:99999' 'a b:51820' 'host:51820;id' '/etc/passwd:1'; do
+    refute "the endpoint \"$bad\" is refused" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' net endpoint '$bad'"
+  done
+  # shellcheck disable=SC2016
+  check "a record is believed only if its address follows from its key and nothing in it could be an option or a command" php -r 'define("OFFLINE_PREFIX", $argv[2]); require $argv[1] . "/lib/cli.php";
+    $key = base64_encode(random_bytes(32)); $other = base64_encode(random_bytes(32));
+    $ok = ["name" => "nuc-attic", "role" => "repeater", "address" => Offline\net_address($key), "endpoint" => "home.example.org:51821", "removed" => false, "updated" => Offline\utc_now()];
+    $bad = [
+      ["address" => Offline\net_address($other)] + $ok, ["address" => "10.47.0.1"] + $ok, ["address" => "192.168.1.1"] + $ok,
+      ["endpoint" => "host:22\nPostUp = id"] + $ok, ["endpoint" => "-x:1"] + $ok, ["name" => "a b"] + $ok, ["name" => "x\n[Peer]"] + $ok,
+      ["role" => "root"] + $ok, ["updated" => "2099-01-01T00:00:00Z"] + $ok, $ok + ["postup" => "id"], ["removed" => "no"] + $ok,
+    ];
+    foreach ($bad as $record) { if (Offline\net_record_ok($record, $key)) { fwrite(STDERR, json_encode($record)); exit(1); } }
+    exit(Offline\net_record_ok($ok, $key) && !Offline\net_record_ok($ok, "not-a-key") && Offline\net_address("short") === null ? 0 : 1);' "$ROOT" "$A"
+  # Two more systems, as a sync would bring them: a repeater that can be called and a laptop that cannot.
+  # shellcheck disable=SC2016
+  php -r 'define("OFFLINE_PREFIX", $argv[2]); require $argv[1] . "/lib/cli.php"; $n = Offline\net_nodes();
+    foreach ([["nuc-attic", "repeater", "home.example.org:51821"], ["laptop-two", "workstation", null]] as [$name, $role, $endpoint]) { $k = base64_encode(random_bytes(32));
+      $n[$k] = ["name" => $name, "role" => $role, "address" => Offline\net_address($k), "endpoint" => $endpoint, "removed" => false, "updated" => Offline\utc_now()]; }
+    Offline\net_nodes_save($n);' "$ROOT" "$A"
+  check "the tunnel's configuration follows the list" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' net apply && [[ \$(grep -c '^\[Peer\]' '$A/etc/wireguard/offline0.conf') -eq 2 ]]"
+  WGCONF="$A/etc/wireguard/offline0.conf"
+  check "the configuration is closed to other accounts" bash -c "[[ \$(stat -c %a '$WGCONF') == 600 ]]"
+  check "every peer needs the key derived from the house key, and is allowed its one address" bash -c "[[ \$(grep -c '^PresharedKey = ' '$WGCONF') -eq 2 && \$(grep -Ec '^AllowedIPs = 10\.47\.[0-9]+\.[0-9]+/32$' '$WGCONF') -eq 2 ]]"
+  refute "no peer is allowed a wider range" grep -Eq '^AllowedIPs = .*(/0|/8|/16|,)' "$WGCONF"
+  check "only a system that can be called is called" bash -c "[[ \$(grep -c '^Endpoint = ' '$WGCONF') -eq 1 ]] && grep -q '^Endpoint = home.example.org:51821' '$WGCONF'"
+  refute "the configuration runs no commands" grep -Eiq '^(PostUp|PostDown|PreUp|PreDown|SaveConfig|DNS|Table)' "$WGCONF"
+  if have wg-quick && ((EUID == 0)); then
+    check "WireGuard accepts the configuration" bash -c "cp '$WGCONF' '$WORK/offline0.conf' && chmod 600 '$WORK/offline0.conf' && wg-quick strip '$WORK/offline0.conf' >/dev/null 2>&1"
+  else
+    note "wireguard-tools not installed, or not root: the tunnel's configuration not parsed by WireGuard"
+  fi
+  check "the report lists the other systems" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' net | grep -Eq 'nuc-attic +repeater +10\.47\.' && OFFLINE_PREFIX='$A' '$ROOT/bin/offline' status --json | php -r 'exit(json_decode(stream_get_contents(STDIN), true)[\"net\"][\"joined\"] === true ? 0 : 1);'"
+  check "a lost system can be dropped" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' net forget laptop-two | grep -q 'change the house key as well' && [[ \$(grep -c '^\[Peer\]' '$WGCONF') -eq 1 ]]"
+  refute "a system cannot forget itself that way" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' net forget \"\$(hostname | tr 'A-Z' 'a-z' | tr -cd 'a-z0-9-')\""
+
+  # The radio layer's configuration.
+  check "the radio layer can be switched on" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' net radio on | grep -q 'The radio layer is on'"
+  RNS="$A/var/lib/offline/reticulum/config"
+  check "every interface carries the household's access code" bash -c "[[ \$(grep -c '^  \[\[' '$RNS') -ge 2 && \$(grep -c '^  \[\[' '$RNS') -eq \$(grep -c '^    passphrase = [0-9a-f]\{64\}$' '$RNS') ]]"
+  refute "the access code is not the house key" grep -q "$KEY" "$RNS"
+  check "a workstation speaks for itself and does not carry others' traffic" grep -q '^  enable_transport = No' "$RNS"
+  check "it calls the systems that can be called, through the tunnel" bash -c "grep -A3 'Private network, to nuc-attic' '$RNS' | grep -Eq 'target_host = 10\.47\.'"
+  refute "packet radio is not configured unless switched on" grep -q 'KISSInterface' "$RNS"
+  mkdir -p "$A/dev/serial/by-id" && touch "$A/dev/serial/by-id/usb-unsigned.io_RNode_1234-if00" "$A/dev/serial/by-id/usb-Some_GPS-if00"
+  sed -i 's/^ROLE=.*/ROLE=repeater/' "$A/etc/offline/offline.conf"
+  echo 'MESH_PACKET=yes' >>"$A/etc/offline/offline.conf"; echo 'MESH_PACKET_PORT="/dev/ttyUSB0; reboot"' >>"$A/etc/offline/offline.conf"
+  OFFLINE_PREFIX="$A" "$ROOT/bin/offline" net radio on >/dev/null
+  check "a repeater carries traffic for others" grep -q '^  enable_transport = Yes' "$RNS"
+  check "a LoRa radio is found by name and held to its airtime limit" bash -c "grep -q 'port = /dev/serial/by-id/usb-unsigned.io_RNode_1234-if00' '$RNS' && grep -q 'airtime_limit_long = 1$' '$RNS' && grep -q 'txpower = 14$' '$RNS'"
+  refute "another serial device is not taken for a radio" grep -q 'Some_GPS' "$RNS"
+  refute "a packet radio port that is not a device name is ignored" grep -q -e reboot -e KISSInterface "$RNS"
+  sed -i 's#^MESH_PACKET_PORT=.*#MESH_PACKET_PORT="/dev/ttyUSB0"#' "$A/etc/offline/offline.conf"
+  check "packet radio is configured once switched on with a real device name" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' net radio on >/dev/null && grep -q 'type = KISSInterface' '$RNS'"
+  sed -i 's/^SYNC_EXPOSE=.*/SYNC_EXPOSE=internet/' "$A/etc/offline/offline.conf"
+  check "on a datacentre's network the radio layer does not look for neighbours" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' net radio on >/dev/null && ! grep -q AutoInterface '$RNS'"
+  sed -i 's/^SYNC_EXPOSE=.*/SYNC_EXPOSE=lan/; s/^ROLE=.*/ROLE=workstation/; /^MESH_PACKET/d' "$A/etc/offline/offline.conf"
+  check "the radio layer can be switched off" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' net radio off >/dev/null && [[ ! -e '$RNS' ]]"
+else
+  note "PHP's sodium extension is missing: the private network not exercised"
+fi
 
 echo
 echo "Games"
@@ -953,6 +1053,26 @@ if have rsync && have stunnel; then
   head -c 2000000 /dev/zero >"$B/var/lib/offline/accounts/accounts.json"
   check "an oversized accounts file is not fetched" bash -c "OFFLINE_PREFIX='$A' OFFLINE_TEST_PEERS='127.0.0.1:$BPORT' '$ROOT/bin/offline' sync >/dev/null; cmp -s '$A/var/lib/offline/accounts/accounts.json' '$WORK/accounts-before.json' && ! ls '$A/var/lib/offline/' | grep -q '^accounts-'"
   refute "the accounts share offers nothing but the one file" bash -c "echo secret >'$B/var/lib/offline/accounts/other.txt'; RSYNC_PASSWORD='$KEY' rsync 'rsync://offline@127.0.0.1:$BDPORT/accounts/other.txt' '$WORK/stolen.txt' 2>/dev/null"
+
+  echo
+  echo "The list of systems between systems"
+  if [[ -f "$A/etc/offline/net/public.key" ]]; then
+    OFFLINE_PREFIX="$B" "$ROOT/bin/offline" net join >/dev/null
+    OFFLINE_PREFIX="$B" "$ROOT/bin/offline" net endpoint b.example.org:51820 >/dev/null
+    check "a system that joined is learnt of at the next sync" bash -c "OFFLINE_PREFIX='$A' OFFLINE_TEST_PEERS='127.0.0.1:$BPORT' '$ROOT/bin/offline' sync | grep -q 'network: 1 system updated'"
+    check "and becomes a peer of the tunnel" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' net apply && grep -q \"^PublicKey = \$(cat '$B/etc/offline/net/public.key')\" '$A/etc/wireguard/offline0.conf' && grep -q '^Endpoint = b.example.org:51820' '$A/etc/wireguard/offline0.conf'"
+    cp "$A/var/lib/offline/network/nodes.json" "$WORK/nodes-before.json"
+    php -r '$k = base64_encode(random_bytes(32)); file_put_contents($argv[1], json_encode(["nodes" => [$k => ["name" => "intruder", "role" => "server", "address" => "10.47.0.1", "endpoint" => "evil.example:51820", "removed" => false, "updated" => gmdate("Y-m-d\\TH:i:s\\Z")],
+      "not a key" => ["name" => "x", "role" => "server", "address" => "10.47.1.1", "endpoint" => null, "removed" => false, "updated" => gmdate("Y-m-d\\TH:i:s\\Z")]]]));' "$B/var/lib/offline/network/nodes.json"
+    check "a record claiming an address that is not its key's changes nothing" bash -c "OFFLINE_PREFIX='$A' OFFLINE_TEST_PEERS='127.0.0.1:$BPORT' '$ROOT/bin/offline' sync >/dev/null; cmp -s '$A/var/lib/offline/network/nodes.json' '$WORK/nodes-before.json'"
+    R="$WORK/r"
+    make_root "$R"
+    echo "$KEY" | OFFLINE_PREFIX="$R" "$ROOT/bin/offline" key set - >/dev/null
+    sed -i 's/^ROLE=.*/ROLE=repeater/; s/^SYNC_MODULES=.*/SYNC_MODULES=""/; s/^VAULT_SYNC=.*/VAULT_SYNC=no/' "$R/etc/offline/offline.conf"
+    OFFLINE_PREFIX="$B" "$ROOT/bin/offline" net endpoint b.example.org:51820 >/dev/null
+    printf 'known to the repeater too\n' | OFFLINE_PREFIX="$B" "$ROOT/bin/offline" user add relayed --adult >/dev/null
+    check "a repeater takes accounts and the list of systems, and no content" bash -c "OFFLINE_PREFIX='$R' OFFLINE_TEST_PEERS='127.0.0.1:$BPORT' '$ROOT/bin/offline' sync >'$WORK/repeater-sync.txt'; grep -q 'accounts: 1 account updated (relayed)' '$WORK/repeater-sync.txt' && grep -q 'network: 1 system updated' '$WORK/repeater-sync.txt' && grep -q '1 trusted' '$WORK/repeater-sync.txt' && [[ -z \$(find '$R/srv/offline/media' '$R/srv/offline/knowledge' -type f | head -n 1) ]]"
+  fi
 
   echo
   echo "Vault exchange"

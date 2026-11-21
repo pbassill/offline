@@ -1,0 +1,10 @@
+[Unit]
+Description=Offline private network: watch the list of the household's systems
+Documentation=https://github.com/pbassill/offline
+
+[Path]
+PathChanged=/var/lib/offline/network/nodes.json
+Unit=offline-net.service
+
+[Install]
+WantedBy=multi-user.target
