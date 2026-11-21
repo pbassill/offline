@@ -1,0 +1,180 @@
+#!/usr/bin/env python3
+"""
+Offline — carries family broadcasts over Reticulum.
+
+Reticulum is given whatever links this system has (the home network, the
+private network's tunnels, a LoRa radio, packet radio) by the configuration
+"offline net radio" writes. This program is the only thing that uses them.
+
+A broadcast that this system holds, which means one whose signature the
+broadcast service has already checked against the house key, is sent once to
+the household's group address. A broadcast heard there is put in the same
+inbox that broadcasts from other systems arrive in; it is shown, kept and
+passed on only if its signature checks. So a message crosses any number of
+hops, each system sends each message once, and nothing unsigned is ever
+relayed.
+
+The group address is encrypted with a key derived from the house key, and
+every interface drops traffic that lacks the household's access code.
+"""
+
+import argparse
+import hashlib
+import hmac
+import json
+import os
+import re
+import sys
+import time
+import zlib
+
+ID = re.compile(r"^\d{8}T\d{6}Z-[0-9a-f]{8}$")
+MAX_FILE = 4096          # the largest envelope the broadcast service accepts
+VALID_SECONDS = 86400    # a broadcast older than this is no longer shown, so it is no longer sent
+SENDS_PER_MINUTE = 6     # a slow radio link, and the legal limit on airtime, must not be flooded
+RAW, PACKED = b"\x01", b"\x02"
+
+
+def derived(house_key: str, purpose: str) -> bytes:
+    """The same derivation the offline command uses: HMAC-SHA256 of a purpose, keyed with the house key."""
+    return hmac.new(house_key.encode(), purpose.encode(), hashlib.sha256).digest()
+
+
+def pack(envelope: bytes) -> bytes:
+    packed = zlib.compress(envelope, 9)
+    return PACKED + packed if len(packed) < len(envelope) else RAW + envelope
+
+
+def unpack(data: bytes):
+    """The envelope a packet carries, or None. Nothing larger than an envelope may be is ever produced."""
+    if len(data) < 2:
+        return None
+    if data[:1] == RAW:
+        body = data[1:]
+    elif data[:1] == PACKED:
+        try:
+            unpacker = zlib.decompressobj()
+            body = unpacker.decompress(data[1:], MAX_FILE + 1)
+            if unpacker.unconsumed_tail:
+                return None
+        except zlib.error:
+            return None
+    else:
+        return None
+    if len(body) > MAX_FILE:
+        return None
+    try:
+        envelope = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        return None
+    if not isinstance(envelope, dict) or not isinstance(envelope.get("id"), str) or not ID.match(envelope["id"]):
+        return None
+    return envelope["id"], body
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--config", required=True, help="Reticulum's configuration folder")
+    parser.add_argument("--key", required=True, help="the house key file")
+    parser.add_argument("--broadcasts", required=True, help="where verified broadcasts are kept")
+    parser.add_argument("--inbox", required=True, help="where arriving broadcasts are left for checking")
+    parser.add_argument("--check", action="store_true", help="start Reticulum, report its interfaces and stop")
+    args = parser.parse_args()
+
+    try:
+        with open(args.key, encoding="ascii") as handle:
+            house_key = handle.read().strip()
+    except OSError as error:
+        print(f"The house key cannot be read: {error}", file=sys.stderr)
+        return 1
+    if not house_key:
+        print("There is no house key.", file=sys.stderr)
+        return 1
+
+    import RNS  # imported late, so that --help works where Reticulum is not installed
+
+    reticulum = RNS.Reticulum(configdir=args.config)
+    group_key = derived(house_key, "offline reticulum group key v1 a") + derived(house_key, "offline reticulum group key v1 b")
+    received = set()
+    sent = set()
+
+    def heard(data, packet):
+        result = unpack(data)
+        if result is None:
+            return
+        identifier, body = result
+        if identifier in received or identifier in sent or os.path.exists(os.path.join(args.broadcasts, identifier + ".json")):
+            return
+        received.add(identifier)
+        target = os.path.join(args.inbox, identifier + ".json")
+        partial = os.path.join(args.inbox, "." + identifier + ".mesh")
+        try:
+            descriptor = os.open(partial, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o640)
+            with os.fdopen(descriptor, "wb") as handle:
+                handle.write(body)
+            os.replace(partial, target)
+            RNS.log(f"Broadcast {identifier} heard on the radio layer and left for checking")
+        except OSError as error:
+            RNS.log(f"Broadcast {identifier} could not be saved: {error}", RNS.LOG_ERROR)
+
+    # Every system of the household arrives at the same group address, because the identity behind it
+    # is worked out from the house key. A group packet is heard by neighbours and is not carried on by
+    # Reticulum itself; it crosses further hops because each system sends on what it has verified.
+    shared = RNS.Identity(create_keys=False)
+    shared.load_private_key(derived(house_key, "offline reticulum group identity v1 x") + derived(house_key, "offline reticulum group identity v1 ed"))
+    inbound = RNS.Destination(shared, RNS.Destination.IN, RNS.Destination.GROUP, "offline", "broadcast")
+    inbound.load_private_key(group_key)
+    inbound.set_packet_callback(heard)
+    outbound = RNS.Destination(shared, RNS.Destination.OUT, RNS.Destination.GROUP, "offline", "broadcast")
+    outbound.load_private_key(group_key)
+
+    if args.check:
+        names = [str(interface) for interface in RNS.Transport.interfaces]
+        print(json.dumps({"interfaces": names, "transport": bool(RNS.Reticulum.transport_enabled()), "limit": RNS.Packet.ENCRYPTED_MDU}))
+        return 0
+
+    # What was already held when this program started has been on its way for a while: only the recent is sent again.
+    started = time.time()
+    recent = []
+    while True:
+        try:
+            names = sorted(os.listdir(args.broadcasts))
+        except OSError:
+            names = []
+        now = time.time()
+        recent = [moment for moment in recent if now - moment < 60]
+        for name in names:
+            identifier = name[:-5] if name.endswith(".json") else ""
+            if not ID.match(identifier) or identifier in sent:
+                continue
+            path = os.path.join(args.broadcasts, name)
+            try:
+                if os.path.islink(path) or os.path.getsize(path) > MAX_FILE:
+                    sent.add(identifier)
+                    continue
+                age = now - os.path.getmtime(path)
+                if age > VALID_SECONDS or (os.path.getmtime(path) < started - 300):
+                    sent.add(identifier)
+                    continue
+                with open(path, "rb") as handle:
+                    payload = pack(handle.read())
+            except OSError:
+                continue
+            if len(payload) > RNS.Packet.ENCRYPTED_MDU:
+                RNS.log(f"Broadcast {identifier} is too long for one radio packet ({len(payload)} bytes); it travels by the other routes only", RNS.LOG_WARNING)
+                sent.add(identifier)
+                continue
+            if len(recent) >= SENDS_PER_MINUTE:
+                break
+            RNS.Packet(outbound, payload).send()
+            sent.add(identifier)
+            recent.append(now)
+            RNS.log(f"Broadcast {identifier} sent on the radio layer ({len(payload)} bytes)")
+        time.sleep(2)
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        sys.exit(0)

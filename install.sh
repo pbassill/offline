@@ -15,7 +15,7 @@ set -Eeuo pipefail
 IFS=$'\n\t'
 umask 022
 
-readonly OFFLINE_VERSION="2.4.0"
+readonly OFFLINE_VERSION="2.5.0"
 readonly SHARE_ROOT="/srv/offline"
 readonly STATE_DIR="/var/lib/offline"
 readonly CONF_DIR="/etc/offline"
@@ -49,6 +49,8 @@ OPT_RADIO=""
 OPT_DRY_RUN=no
 OPT_SCOPE=""
 OPT_DESKTOP=""
+OPT_ENDPOINT=""
+OPT_MESH=""
 OPT_KEY=""
 OPT_PACKS=""
 OPT_MODELS=""
@@ -75,6 +77,13 @@ Usage: sudo ./install.sh [options]
                        and children sit at
                        server: a central system that downloads, stages and
                        serves content to the others, with everything installed
+                       repeater: a small system with no screen that holds the
+                       household's private network together over whatever
+                       links it has, and holds no content
+  --endpoint HOST:PORT where other systems can call this one from outside (a
+                       server in a datacentre, or a home system behind a
+                       forwarded UDP port); they connect to it over WireGuard
+  --no-mesh            leave out the radio layer of the private network (Reticulum)
   --headless           a server with no screen: leave out the desktop programs
   --desktop            a server that people also sit at (the default where a
                        desktop is already installed)
@@ -279,6 +288,9 @@ create_directories() {
   # household's other systems, and by the sign-in pages. Nobody else: not the
   # web server, and not the ordinary portal pages.
   install -d -m 2750 -o offline -g offline-auth "$STATE_DIR/accounts"
+  # The list of the household's systems, and Reticulum's own state.
+  install -d -m 0755 -o offline -g offline "$STATE_DIR/network"
+  install -d -m 0750 -o offline -g offline "$STATE_DIR/reticulum"
   # A child's login account uses the portal like any tablet does, and has no
   # business in the folders themselves: the library and the films are closed to
   # the children's group by name, whatever the folders allow everyone else.
@@ -327,6 +339,7 @@ install_tools() {
     "$SCRIPT_DIR/config/sites.tsv" "$SCRIPT_DIR/config/packages.list" "$SCRIPT_DIR/config/offline-routing.container" \
     "$SCRIPT_DIR/config/children.tsv" "$SCRIPT_DIR/config/children-guard.nft" "$LIB_DIR/"
   install -m 0755 -o root -g root "$SCRIPT_DIR/config/apt-proxy-detect" "$LIB_DIR/apt-proxy-detect"
+  install -m 0755 -o root -g root "$SCRIPT_DIR/mesh/offline-mesh-bridge" "$LIB_DIR/offline-mesh-bridge"
   # Games: the list, the family-world units and their settings.
   rsync --recursive --delete --chmod=D755,F644 --chown=root:root "$SCRIPT_DIR/games/" "$LIB_DIR/games/"
   # The desktop alert and the dialog that sends a family broadcast.
@@ -346,6 +359,11 @@ install_tools() {
   fi
   conf_set PORTAL_SCOPE "$SCOPE"
   conf_set ROLE "$ROLE"
+  if [[ "$ROLE" == repeater ]]; then
+    # A repeater exchanges accounts, the list of systems and broadcasts, and no content.
+    conf_set SYNC_MODULES ""
+    conf_set VAULT_SYNC no
+  fi
   conf_set SYNC_EXPOSE "$EXPOSE"
   if [[ "$EXPOSE" == internet ]]; then
     # A system in a datacentre must not go looking through its neighbours' addresses.
@@ -551,10 +569,11 @@ start_services() {
   /usr/local/bin/offline library
   systemctl enable offline-rsync.service offline-tls.service offline-reader.service offline-reader-adults.service offline-peer-sync.timer \
     offline-status.timer offline-library.path offline-broadcast.path offline-broadcast-poll.timer offline-sessions.timer \
-    offline-tls-renew.timer offline-accounts.path offline-accounts.service offline-children-guard.service
+    offline-tls-renew.timer offline-accounts.path offline-accounts.service offline-children-guard.service \
+    offline-net.path offline-net.service
   systemctl restart offline-rsync.service offline-tls.service offline-reader.service offline-reader-adults.service
   systemctl restart offline-peer-sync.timer offline-status.timer offline-library.path offline-broadcast.path offline-broadcast-poll.timer \
-    offline-sessions.timer offline-tls-renew.timer offline-accounts.path
+    offline-sessions.timer offline-tls-renew.timer offline-accounts.path offline-net.path
   # The children's guard confines child accounts whether or not any exist yet.
   systemctl restart offline-children-guard.service
   # Children do not log in over the network, on any system.
@@ -788,6 +807,8 @@ while (($# > 0)); do
     --no-games) OPT_GAMES=no; shift ;;
     --host-games) OPT_HOST_GAMES=yes; shift ;;
     --hotspot) OPT_HOTSPOT=yes; shift ;;
+    --endpoint) OPT_ENDPOINT="${2:?--endpoint needs HOST:PORT}"; shift 2 ;;
+    --no-mesh) OPT_MESH=no; shift ;;
     --headless) OPT_DESKTOP=no; shift ;;
     --desktop) OPT_DESKTOP=yes; shift ;;
     --apt-cache) OPT_APT_CACHE="${2:?--apt-cache needs a host}"; shift 2 ;;
@@ -888,13 +909,13 @@ SCOPE="$OPT_SCOPE"
 ROLE="$OPT_ROLE"
 [[ -n "$ROLE" ]] || ROLE="$(conf_get ROLE)"
 [[ -n "$ROLE" ]] || ROLE=workstation
-[[ "$ROLE" == workstation || "$ROLE" == server ]] || die "--role must be workstation or server, not \"$ROLE\"."
+[[ "$ROLE" == workstation || "$ROLE" == server || "$ROLE" == repeater ]] || die "--role must be workstation, server or repeater, not \"$ROLE\"."
 EXPOSE="$OPT_EXPOSE"
 [[ -n "$EXPOSE" ]] || EXPOSE="$(conf_get SYNC_EXPOSE)"
 [[ -n "$EXPOSE" ]] || EXPOSE=lan
 [[ "$EXPOSE" == lan || "$EXPOSE" == internet ]] || die "--expose must be lan or internet, not \"$EXPOSE\"."
-if [[ "$EXPOSE" == internet && "$ROLE" != server ]]; then
-  die "--expose internet is for a central server. Add --role server, or leave --expose out."
+if [[ "$EXPOSE" == internet && "$ROLE" == workstation ]]; then
+  die "--expose internet is for a server or a repeater. Add --role server or --role repeater, or leave --expose out."
 fi
 if [[ "$EXPOSE" == internet ]]; then
   # Only the keyed, encrypted sharing port faces the internet. The portal, the
@@ -903,6 +924,13 @@ if [[ "$EXPOSE" == internet ]]; then
     say "  ${C_YELLOW}note:${C_OFF} --lan is ignored with --expose internet; the portal stays on this system only."
   fi
   SCOPE=local
+fi
+if [[ "$ROLE" == repeater ]]; then
+  # A repeater has a status page for whoever sits at it and offers the network nothing but the network.
+  SCOPE=local
+fi
+if [[ -n "$OPT_ENDPOINT" && ! "$OPT_ENDPOINT" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?:[1-9][0-9]{1,4}$ ]]; then
+  die "--endpoint takes HOST:PORT, for example files.example.org:51820; \"$OPT_ENDPOINT\" is not that."
 fi
 readonly SCOPE ROLE EXPOSE
 for server in "${OPT_SERVERS[@]:-}"; do
@@ -914,6 +942,8 @@ done
 # programs if it has a desktop, which can be said outright or is found out.
 if [[ "$ROLE" == workstation ]]; then
   DESKTOP=yes
+elif [[ "$ROLE" == repeater ]]; then
+  DESKTOP=no
 elif [[ -n "$OPT_DESKTOP" ]]; then
   DESKTOP="$OPT_DESKTOP"
 elif [[ -x /usr/sbin/gdm3 || -x /usr/bin/sddm || -x /usr/sbin/lightdm || -x /usr/bin/gnome-shell ]]; then
@@ -922,7 +952,12 @@ else
   DESKTOP=no
 fi
 readonly DESKTOP
-# Every role has everything; what a desktop is needed for goes where there is one.
+# A repeater is the exception to "everything": it carries the network and nothing else.
+if [[ "$ROLE" == repeater ]]; then
+  : "${OPT_AI:=no}" "${OPT_APPS:=none}" "${OPT_RADIO:=mesh}" "${OPT_GAMES:=no}" "${OPT_HOST_GAMES:=no}"
+fi
+: "${OPT_MESH:=yes}"
+# Every other role has everything; what a desktop is needed for goes where there is one.
 WHY_NO_RADIO="--no-radio"
 WHY_NO_AI="--no-ai"
 WHY_NO_APPS="--apps none"
@@ -988,15 +1023,20 @@ if [[ "$PACKAGES" == yes ]]; then
   fi
   step "Install map and container tools (git, Podman)" apt_install git podman netavark aardvark-dns crun uidmap pipx
   step "Install the children's guard (nftables)" apt_install nftables
+  step "Install the private network tools (WireGuard, Python for Reticulum)" apt_install wireguard-tools python3-venv python3-pip python3-cryptography python3-serial
   if [[ "$DESKTOP" != yes ]]; then
-    skip "Desktop applications (this server has no desktop)"
+    skip "Desktop applications (this system has no desktop)"
   else
     step "Install desktop applications (VLC, Kiwix)" apt_install vlc kiwix
     step "Install the desktop alert helpers (dialogs, notifications)" install_alert_helpers
     # GNOME's parental controls, for children's accounts. Not in every release.
     apt-get install -y --no-install-recommends malcontent >>"$LOG_FILE" 2>&1 || true
   fi
-  step "Install download helpers (yt-dlp, ffmpeg)" apt_install yt-dlp ffmpeg
+  if [[ "$ROLE" == repeater ]]; then
+    skip "Download helpers (a repeater holds no content)"
+  else
+    step "Install download helpers (yt-dlp, ffmpeg)" apt_install yt-dlp ffmpeg
+  fi
   step "Install power tools (powertop, power-profiles-daemon)" apt_install powertop power-profiles-daemon
 else
   skip "Package installation (no internet connection)"
@@ -1035,9 +1075,22 @@ fi
 if [[ "$OPT_HOTSPOT" == yes ]]; then
   step "Turn on the Wi-Fi hotspot" /usr/local/bin/offline hotspot on --yes
 fi
+step "Join the household's private network" /usr/local/bin/offline net join
+if [[ -n "$OPT_ENDPOINT" ]]; then
+  step "Tell the other systems where to call this one: $OPT_ENDPOINT" /usr/local/bin/offline net endpoint "$OPT_ENDPOINT"
+fi
+if [[ "$OPT_MESH" != yes ]]; then
+  skip "Radio layer of the private network (--no-mesh)"
+elif [[ "$ONLINE" == yes || -x /opt/offline/rns/bin/python3 ]]; then
+  step "Switch on the radio layer of the private network (Reticulum $(sed -n "s/^const RNS_VERSION = '\(.*\)';$/\1/p" "$SCRIPT_DIR/lib/net.php"), pinned)" /usr/local/bin/offline net radio on
+else
+  skip "Radio layer of the private network (no internet connection to fetch Reticulum)"
+fi
 
 section "Maps"
-if [[ "$ONLINE" == yes ]]; then
+if [[ "$ROLE" == repeater ]]; then
+  skip "Map tool and viewer assets (a repeater holds no content)"
+elif [[ "$ONLINE" == yes ]]; then
   step "Install the pinned map tool (pmtiles $PMTILES_VERSION)" install_pmtiles
   step "Fetch the map viewer's fonts, symbols and world outline" /usr/local/bin/offline maps setup
 else
@@ -1071,19 +1124,23 @@ else
 fi
 
 section "Radio"
-if [[ "$OPT_RADIO" != yes ]]; then
+if [[ "$OPT_RADIO" != yes && "$OPT_RADIO" != mesh ]]; then
   skip "Radio tools ($WHY_NO_RADIO)"
 elif [[ "$ONLINE" != yes ]]; then
   skip "Radio tools (no internet connection)"
 else
-  step "Install receiver, decoder and handset tools" install_radio_packages
+  if [[ "$OPT_RADIO" == mesh ]]; then
+    skip "Receiver, decoder and handset tools (a repeater needs only the mesh)"
+  else
+    step "Install receiver, decoder and handset tools" install_radio_packages
+  fi
   step "Install the Meshtastic command" install_meshtastic_cli
   step "Give $TARGET_USER access to receivers and serial ports" configure_radio_access
 fi
 
 section "Desktop and AI applications"
 if [[ "$OPT_AI" != yes ]]; then
-  skip "Ollama and Msty Studio ($WHY_NO_AI)"
+  skip "Ollama and Msty Studio ($([[ "$ROLE" == repeater ]] && echo 'a repeater carries the network and nothing else' || echo "$WHY_NO_AI"))"
 elif [[ "$ONLINE" != yes ]]; then
   skip "Ollama and Msty Studio (no internet connection)"
 else
@@ -1110,7 +1167,7 @@ else
   step "Install JDownloader" install_jdownloader
 fi
 if [[ "$DESKTOP" != yes ]]; then
-  skip "Desktop shortcuts and the broadcast alert (this server has no desktop)"
+  skip "Desktop shortcuts and the broadcast alert (this system has no desktop)"
 else
   step "Create desktop shortcuts and the broadcast alert" desktop_shortcuts
 fi
@@ -1121,7 +1178,7 @@ while IFS= read -r app; do
   [[ -n "$app" ]] && APP_ARGS+=("$app")
 done < <(tr ' ,' '\n' <<<"$OPT_APPS")
 if [[ "$OPT_APPS" == none ]]; then
-  skip "Browser applications ($WHY_NO_APPS)"
+  skip "Browser applications ($([[ "$ROLE" == repeater ]] && echo 'a repeater carries the network and nothing else' || echo "$WHY_NO_APPS"))"
 elif ! command -v podman >/dev/null 2>&1 && [[ "$OPT_DRY_RUN" != yes ]]; then
   skip "Browser applications (Podman is not installed)"
 else
@@ -1206,6 +1263,7 @@ ${C_BOLD}Next${C_OFF}
   Find places and routes      sudo offline maps places         and   sudo offline maps routing build uk
   Be the house's Wi-Fi        sudo offline hotspot on          (needs a Wi-Fi adapter)
   Make the first accounts     sudo offline user add NAME --adult --admin     and   sudo offline user add NAME --child
+  See the private network     offline net              and, where others can call this system:   sudo offline net endpoint HOST:PORT
   Check health at any time    offline doctor
 
   Full log: $LOG_FILE
