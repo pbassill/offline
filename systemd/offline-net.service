@@ -1,0 +1,40 @@
+# Brings the tunnel and the radio layer into line with the list of the
+# household's systems, whenever a sync changes it and at every start. Root is
+# needed to configure a network interface; the list it reads holds public keys
+# and addresses only, each address checked against the key it must follow from.
+[Unit]
+Description=Offline private network: follow the list of the household's systems
+Documentation=https://github.com/pbassill/offline
+ConditionPathExists=/etc/offline/net/private.key
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/offline net apply
+ReadWritePaths=/etc/wireguard /etc/apache2/conf-available /etc/apache2/conf-enabled /var/lib/offline/reticulum -/etc/ufw -/run
+
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_DAC_OVERRIDE CAP_CHOWN CAP_FOWNER
+AmbientCapabilities=
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+UMask=0027
+IPAddressDeny=any
+
+[Install]
+WantedBy=multi-user.target

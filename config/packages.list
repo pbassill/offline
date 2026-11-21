@@ -54,6 +54,10 @@ pipx
 podman
 power-profiles-daemon
 powertop
+python3-cryptography
+python3-pip
+python3-serial
+python3-venv
 qrencode
 rsync
 rtl-433
@@ -71,5 +75,6 @@ uidmap
 unzip
 vlc
 welle.io
+wireguard-tools
 yt-dlp
 zenity

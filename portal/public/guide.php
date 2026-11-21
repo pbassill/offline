@@ -130,6 +130,16 @@ sudo offline games host all
 sudo offline games activities</code></pre>
 </section>
 
+<section aria-labelledby="h-net">
+  <h2 id="h-net">The private network</h2>
+  <p>Every system joins the household's private network when it is installed. Over the home network, the internet or a mobile connection the systems reach one another through an encrypted tunnel; where there is no such path, family broadcasts still cross by LoRa radio.</p>
+  <pre><code>offline net
+sudo offline net endpoint HOST:PORT
+sudo offline net radio on
+sudo offline net forget NAME</code></pre>
+  <p class="row-note">A system that others can call from outside, such as a server in a datacentre or a home system behind a forwarded UDP port, says so with <code>endpoint</code>. A lost system is removed with <code>forget</code>, and the house key should then be changed as well.</p>
+</section>
+
 <section aria-labelledby="h-people">
   <h2 id="h-people">Accounts for adults and children</h2>
   <p>Anyone who has not signed in sees the children's pages. Adults sign in for everything else. An account made on one system reaches every other system within a few minutes, with the same password for the portal and for logging in.</p>
