@@ -1088,3 +1088,58 @@ td.is-off {
 [data-theme="vt100"] .masthead .nav-link > i {
   display: none;
 }
+
+/* ---- Signing in --------------------------------------------------------- */
+
+.account-link {
+  margin-left: 0.75rem;
+  border: 1px solid var(--o-rule);
+  color: var(--o-ink);
+  white-space: nowrap;
+}
+
+.account-link:hover,
+.account-link:focus-visible {
+  border-color: var(--o-accent);
+  color: var(--o-accent);
+}
+
+.account-name {
+  color: var(--o-muted);
+}
+
+.signin {
+  max-width: 34rem;
+  margin: 2.5rem auto 3rem;
+}
+
+.signin h1 {
+  font-size: 2rem;
+  font-weight: 700;
+}
+
+.signin form {
+  margin: 1.5rem 0 1.25rem;
+}
+
+.signin .form-control {
+  background: var(--o-surface);
+  border-color: var(--o-rule);
+  color: var(--o-ink);
+}
+
+.signin .form-control:focus {
+  border-color: var(--o-accent);
+  box-shadow: 0 0 0 0.2rem rgba(var(--o-accent-rgb), 0.25);
+}
+
+.signin .btn-outline-secondary {
+  border-color: var(--o-rule);
+  color: var(--o-ink);
+}
+
+@media (min-width: 1200px) and (max-width: 1499.98px) {
+  .account-name {
+    display: none;
+  }
+}

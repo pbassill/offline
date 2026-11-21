@@ -1,0 +1,12 @@
+[Unit]
+Description=Offline: check this system's certificate weekly
+Documentation=https://github.com/pbassill/offline
+
+[Timer]
+OnBootSec=10min
+OnCalendar=weekly
+RandomizedDelaySec=1h
+Persistent=yes
+
+[Install]
+WantedBy=timers.target

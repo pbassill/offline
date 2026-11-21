@@ -1,14 +1,16 @@
+# The reader that anyone on the home network may open. Its index holds only the
+# titles chosen for children (offline library), so it can serve nothing else.
 [Unit]
-Description=Offline library reader (kiwix-serve, TCP 8080)
+Description=Offline children's shelf (kiwix-serve, TCP 8080)
 Documentation=https://github.com/pbassill/offline
 After=network.target
-ConditionPathExists=/var/lib/offline/library.xml
+ConditionPathExists=/var/lib/offline/library-children.xml
 
 [Service]
 Type=simple
 User=offline
 Group=offline
-ExecStart=/usr/bin/kiwix-serve --port=8080 --monitorLibrary --blockexternal --library /var/lib/offline/library.xml
+ExecStart=/usr/bin/kiwix-serve --port=8080 --monitorLibrary --blockexternal --library /var/lib/offline/library-children.xml
 Restart=on-failure
 RestartSec=10
 

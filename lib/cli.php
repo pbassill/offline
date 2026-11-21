@@ -22,6 +22,8 @@ require_once __DIR__ . '/games.php';
 require_once __DIR__ . '/network.php';
 require_once __DIR__ . '/vault.php';
 require_once __DIR__ . '/rebuild.php';
+require_once __DIR__ . '/auth.php';
+require_once __DIR__ . '/users.php';
 
 // ---------------------------------------------------------------------------
 // Output
@@ -510,6 +512,8 @@ function collect_status(): array
         'games' => games_status(),
         'hotspot' => ['set_up' => is_file(hotspot_profile_file()), 'on' => hotspot_active()],
         'time_server' => time_serving(),
+        'people' => people_status(),
+        'tls' => tls_status(),
         'vault' => vault_status(),
         'rebuild' => rebuild_status(),
         'house_key' => is_file(path('key')) && (int) @filesize(path('key')) > 0,
@@ -746,6 +750,22 @@ function command_doctor(array $args): int
         $open = ((int) @fileperms(path('vault')) & 0007) !== 0;
         $add('Family vault', $open ? 'fail' : 'ok', $open ? 'its folder is open to every local account' : plural($status['vault']['files'], 'encrypted file') . ', closed to other accounts',
             'sudo chmod 2770 ' . path('vault'));
+    }
+    $people = $status['people'];
+    if ($people['children_here'] > 0) {
+        $guarded = children_guard_active();
+        $add('Children\'s guard', $guarded ? 'ok' : 'fail', $guarded
+            ? plural($people['children_here'], 'child account') . ' here, kept from the internet and from the services meant for adults'
+            : plural($people['children_here'], 'child account') . ' here can reach the internet: the guard is not running', 'sudo systemctl enable --now ' . CHILDREN_GUARD);
+    }
+    if (prefix() === '' && is_dir('/var/www/offline')) {
+        $add('Portal sign-in', !$people['sign_in'] ? 'fail' : ($people['adults'] > 0 ? 'ok' : 'warn'), match (true) {
+            !$people['sign_in'] => 'the session folder is missing, so nobody can sign in and only the children\'s pages are shown',
+            $people['adults'] > 0 => plural($people['adults'], 'adult account') . ', ' . plural($people['children'], 'child account'),
+            default => 'no adult account yet, so only the children\'s pages can be opened',
+        }, $people['sign_in'] ? 'sudo offline user add NAME --adult' : 'sudo systemd-tmpfiles --create /etc/tmpfiles.d/offline.conf');
+        $days = $status['tls']['days'];
+        $add('Certificate', $days === null ? 'fail' : ($days < 30 ? 'warn' : 'ok'), $days === null ? 'none, so adults cannot sign in' : "valid for another $days days", 'sudo offline tls renew');
     }
     if ($status['role'] === 'server' && (string) config('SYNC_EXPOSE') !== 'internet') {
         $add('Time service', $status['time_server'] ? 'ok' : 'warn', $status['time_server'] ? 'answering the home network' : 'this server is not serving time to the household', 'sudo offline time serve on');
@@ -1244,12 +1264,29 @@ function rebuild_library(bool $verbose): bool
     }
     @chmod($tmp, 0644);
     $ok = @rename($tmp, $target);
+    // The children's shelf is a second index holding only the titles chosen for them; its reader serves nothing else.
+    $shelf = path('library_children') . '.new.' . getmypid();
+    @unlink($shelf);
+    $children = 0;
+    if (have('kiwix-manage')) {
+        foreach (list_zims() as $zim) {
+            $file = path('zim') . '/' . $zim['file'];
+            if (is_children_title($zim['base']) && valid_zim_file($file) && run(['kiwix-manage', $shelf, 'add', $file], 300)[0] === 0) {
+                $children++;
+            }
+        }
+    }
+    if (!is_file($shelf)) {
+        file_put_contents($shelf, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<library version=\"20110515\"></library>\n");
+    }
+    @chmod($shelf, 0644);
+    $ok = @rename($shelf, path('library_children')) && $ok;
     if ($lock !== null) {
         flock($lock, LOCK_UN);
         fclose($lock);
     }
     if ($verbose) {
-        out('Reader index rebuilt: ' . plural($added, 'title') . ($failed > 0 ? ", $failed skipped" : '') . '.');
+        out('Reader index rebuilt: ' . plural($added, 'title') . ($failed > 0 ? ", $failed skipped" : '') . ', of which ' . $children . ' on the children\'s shelf.');
     }
     return $ok;
 }
@@ -1776,6 +1813,13 @@ function command_sync(array $args): int
             }
             $gotZim = $gotZim || ($module === 'knowledge' && $files > 0);
         }
+        if ($result['auth'] === 'ok' && !$dryRun) {
+            $changed = accounts_pull($peer);
+            if ($changed !== []) {
+                out("  $ip/accounts: " . plural(count($changed), 'account') . ' updated (' . implode(', ', $changed) . ')');
+                $accountsChanged = true;
+            }
+        }
         if ($result['auth'] === 'ok' && $result['offers'] !== [] && count($result['offers']) === count($modules)) {
             $result['error'] = '';
         } elseif ($result['auth'] === 'error') {
@@ -1795,6 +1839,9 @@ function command_sync(array $args): int
     $trusted = count(array_filter($results, static fn (array $r): bool => $r['auth'] === 'ok'));
     $message = plural(count($found), 'system') . ' found, ' . $trusted . ' trusted; '
         . ($dryRun ? 'dry run, nothing fetched' : ($totalFiles === 0 ? 'nothing new to fetch' : plural($totalFiles, 'file') . ' received (' . human_bytes($totalBytes) . ')'));
+    if ($accountsChanged ?? false) {
+        $message .= '; accounts updated';
+    }
     if ($counts['no_space'] > 0) {
         $message .= '; ' . plural($counts['no_space'], 'file') . ' left behind to protect free space';
     }
@@ -1802,6 +1849,54 @@ function command_sync(array $args): int
         $message .= '; ' . plural($counts['filtered'], 'file') . ' ignored as not an accepted type';
     }
     return $finish('ok', $message, $found, $results, $totalFiles, $totalBytes);
+}
+
+/**
+ * Fetch another system's account records and keep whatever is newer. Returns
+ * the names that changed. The file is small, is fetched to one side, and every
+ * record in it is checked before it is believed.
+ */
+function accounts_pull(array $peer): array
+{
+    $tmp = path('state') . '/accounts-' . getmypid() . '.json';
+    @unlink($tmp);
+    [$env, $conf] = tls_transport($peer);
+    [$code] = run([
+        'rsync', '--no-motd', '--timeout=60', '--max-size=1m', '--chmod=F600', '--password-file=' . path('key'),
+        rsync_url($peer, 'accounts') . 'accounts.json', $tmp,
+    ], 90, $env);
+    @unlink($conf);
+    $theirs = $code === 0 && is_file($tmp) && !is_link($tmp) ? accounts_load($tmp) : [];
+    @unlink($tmp);
+    if ($theirs === []) {
+        return [];
+    }
+    $lock = lock('accounts', true);
+    [$merged, $changed] = accounts_merge(accounts_load(), $theirs);
+    if ($changed !== []) {
+        accounts_dir_ready();
+        if (!accounts_save($merged)) {
+            $changed = [];
+        }
+    }
+    if ($lock !== null) {
+        flock($lock, LOCK_UN);
+        fclose($lock);
+    }
+    return $changed;
+}
+
+/** For the status file: how many accounts there are, and whether children on this system are guarded. */
+function people_status(): array
+{
+    $accounts = is_readable(path('accounts')) ? array_filter(accounts_load(), static fn (array $r): bool => !$r['removed']) : [];
+    $children = array_keys(array_filter($accounts, static fn (array $r): bool => $r['class'] === 'child'));
+    return [
+        'adults' => count($accounts) - count($children),
+        'children' => count($children),
+        'children_here' => count(array_filter($children, static fn (string $name): bool => login_account($name) !== null)),
+        'sign_in' => is_dir(dirname(path('sessions'))),
+    ];
 }
 
 // ---------------------------------------------------------------------------
@@ -1853,6 +1948,10 @@ function store_key(string $key): void
         if (!rename($tmp, $file)) {
             fail("Could not replace $file");
         }
+    }
+    // The household's certificate authority follows the house key, so this system's certificate is signed afresh.
+    if (have('openssl') && is_dir(dirname(path('tls')))) {
+        ensure_tls_certificate();
     }
 }
 
@@ -2000,12 +2099,18 @@ function usage(): void
     out('  offline server                       the servers this system pulls from');
     out('  offline server add HOST[:PORT] | remove HOST | test');
     out('  offline queue                        downloads waiting, running and done');
-    out('  offline queue add URL ... [--to movies|tv|music|radio|books] [--audio]');
+    out('  offline queue add URL ... [--to movies|tv|music|radio|books|children] [--audio]');
     out('  offline queue sites                  websites worth archiving, UK ones included');
     out('  offline queue site NAME|GROUP        archive a website as a library title');
     out('  offline queue run | archive | remove ID | retry ID');
     out('  offline stage                        what has been downloaded and awaits release');
     out('  offline stage publish ID|all [--to FOLDER] | discard ID');
+    out();
+    out('People (run with sudo, except the list)');
+    out('  offline user                         the household\'s accounts');
+    out('  offline user add NAME --adult|--child [--full "Full name"] [--admin] [--portal-only]');
+    out('  offline user passwd NAME | lock NAME | unlock NAME | remove NAME | apply');
+    out('  offline tls [renew]                  this system\'s certificate and the household\'s certificate authority');
     out();
     out('Family vault (run as yourself)');
     out('  offline vault                        whether the encrypted family folder exists and is open');
@@ -2041,6 +2146,10 @@ function main(array $argv): int
     // Everything else, including read-only reporting, runs as the unprivileged
     // service account.
     $keepsRoot = ['key', 'power', 'vault', 'help', '--help', '-h', 'version', '--version', '-V'];
+    // Accounts belong to the system; so does its certificate. The session clean-up runs as the sign-in account.
+    if (in_array($command, ['user', 'users', 'tls'], true)) {
+        $keepsRoot[] = $command;
+    }
     // Managing applications needs root; merely listing them does not.
     if (in_array($command, ['apps', 'games'], true) && ($args[0] ?? 'list') !== 'list') {
         $keepsRoot[] = $command;
@@ -2092,6 +2201,8 @@ function main(array $argv): int
         'games' => command_games($args),
         'hotspot' => command_hotspot($args),
         'vault' => command_vault($args),
+        'user', 'users' => command_user($args),
+        'tls' => command_tls($args),
         'rebuild' => command_rebuild($args),
         'export' => command_export($args),
         'import' => command_import($args),

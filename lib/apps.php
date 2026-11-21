@@ -120,33 +120,6 @@ function write_private(string $file, string $content): void
     chmod($file, 0600);
 }
 
-/** A self-signed certificate for the applications that browsers only accept over TLS. */
-function ensure_tls_certificate(): bool
-{
-    $dir = prefix() . TLS_DIR;
-    if (is_file("$dir/offline.crt") && is_file("$dir/offline.key")) {
-        return true;
-    }
-    @mkdir($dir, 0755, true);
-    $host = preg_replace('/[^a-z0-9-]/', '', strtolower((string) gethostname())) ?: 'offline';
-    $previous = umask(0077);
-    [$code, , $error] = run([
-        'openssl', 'req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:prime256v1', '-nodes', '-sha256',
-        '-days', '825', '-subj', "/CN=$host.local/O=Offline",
-        '-addext', "subjectAltName=DNS:$host,DNS:$host.local,DNS:localhost,IP:127.0.0.1",
-        '-addext', 'keyUsage=critical,digitalSignature', '-addext', 'extendedKeyUsage=serverAuth',
-        '-keyout', "$dir/offline.key", '-out', "$dir/offline.crt",
-    ], 60);
-    umask($previous);
-    if ($code !== 0) {
-        warn('Could not create the TLS certificate: ' . printable(trim($error), 200));
-        return false;
-    }
-    chmod("$dir/offline.key", 0600);
-    chmod("$dir/offline.crt", 0644);
-    return true;
-}
-
 /** Create data folders, generated sign-in details and seed files. */
 function app_prepare(array $app): bool
 {
@@ -216,14 +189,23 @@ function app_proxy_config(array $app): string
                 '    RequestHeader set X-Forwarded-Proto "https"',
             ]);
         }
+        $gated = $app['audience'] === 'gate';
+        if ($gated) {
+            // The application has no sign-in of its own, so the portal's stands in front of it.
+            $lines[] = '    Include /etc/apache2/offline/session-gate.conf';
+            $lines[] = '    ErrorDocument 403 "This is for the adults of the house. Sign in to the portal first, then open this address again."';
+        }
         $lines = array_merge($lines, [
             '    <Location />',
+            $gated ? '        <RequireAll>' : null,
+            $gated ? '        Require env OFFLINE_ADULT' : null,
             '        <RequireAny>',
             '            Require local',
             '            <IfDefine OFFLINE_LAN>',
             '                Require ip ' . implode(' ', LAN_NETS),
             '            </IfDefine>',
             '        </RequireAny>',
+            $gated ? '        </RequireAll>' : null,
             '    </Location>',
             '    # Uploads to an application may be large; the portal keeps its own 1 MiB limit.',
             '    LimitRequestBody 4294967296',
@@ -238,7 +220,7 @@ function app_proxy_config(array $app): string
             '',
         ]);
     }
-    return implode("\n", $lines);
+    return implode("\n", array_filter($lines, static fn (?string $line): bool => $line !== null));
 }
 
 function app_firewall(array $app, bool $open): void

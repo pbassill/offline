@@ -6,19 +6,21 @@
 #            retired = in NOMAD's catalogue but no longer maintained upstream, so never part of "all"
 #   boot     auto = started at boot once added; manual = started on request (heavier applications)
 #   proxies  LAN port > loopback port, comma separated; the first is the address people open; - for none
-cyberchef	CyberChef	Data tools	nomad	auto	http	8100>18100	128m	amd64,arm64	Encode, decode, encrypt, hash and analyse data in the browser.	No sign-in. Nothing leaves the browser.
-it-tools	IT Tools	Data tools	nomad	auto	http	8430>18430	128m	amd64,arm64	Handy converters, generators and formatters for technical work.	No sign-in.
-excalidraw	Excalidraw	Productivity	nomad	auto	http	8440>18440	128m	amd64	Whiteboard for sketching diagrams. Drawings are kept in the browser.	No sign-in.
-meshtastic-web	Meshtastic Web	Radio	nomad	auto	https	8450>18450	128m	amd64,arm64	Configure and message through a Meshtastic radio over USB, Bluetooth or its own network address.	No sign-in. USB and Bluetooth need a Chromium-based browser.
-meshcore-web	MeshCore Web	Radio	nomad	manual	https	8500>18500	128m	amd64,arm64	Browser client for MeshCore mesh radios.	No sign-in. USB and Bluetooth need a Chromium-based browser.
+# An optional twelfth column says who may open it: all = children too; gate = it has no sign-in of its own,
+#   so the proxy uses TLS and admits only an adult signed in to the portal; left out = it has its own sign-in.
+cyberchef	CyberChef	Data tools	nomad	auto	http	8100>18100	128m	amd64,arm64	Encode, decode, encrypt, hash and analyse data in the browser.	No sign-in. Nothing leaves the browser.	gate
+it-tools	IT Tools	Data tools	nomad	auto	http	8430>18430	128m	amd64,arm64	Handy converters, generators and formatters for technical work.	No sign-in.	gate
+excalidraw	Excalidraw	Productivity	nomad	auto	http	8440>18440	128m	amd64	Whiteboard for sketching diagrams. Drawings are kept in the browser.	No sign-in.	all
+meshtastic-web	Meshtastic Web	Radio	nomad	auto	https	8450>18450	128m	amd64,arm64	Configure and message through a Meshtastic radio over USB, Bluetooth or its own network address.	No sign-in. USB and Bluetooth need a Chromium-based browser.	gate
+meshcore-web	MeshCore Web	Radio	nomad	manual	https	8500>18500	128m	amd64,arm64	Browser client for MeshCore mesh radios.	No sign-in. USB and Bluetooth need a Chromium-based browser.	gate
 flatnotes	Flatnotes	Productivity	nomad	auto	http	8200>18200	256m	amd64,arm64	Markdown notes kept as plain files on this laptop.	User "offline"; the password is shown by: sudo offline apps info flatnotes
 homebox	Homebox	Productivity	nomad	manual	http	8470>18470	256m	amd64,arm64	Household inventory: what you own, where it is and what it is worth.	Register the first account on its sign-in page.
 filebrowser	File Browser	Files	retired	manual	http	8410>18410	256m	amd64,arm64	Browse the media, library and map folders from any device, and upload files into its own folder. Upstream archived this project in September 2026 and issues no more security fixes, so install it only if you need it and stop it after use.	User "admin"; the password is shown by: sudo offline apps info filebrowser
 vaultwarden	Vaultwarden	Security	nomad	manual	https	8480>18480	256m	amd64,arm64	Password manager compatible with Bitwarden apps, holding its vault on this laptop.	Create your account, then set SIGNUPS_ALLOWED=false in its unit file to close registration.
-kolibri	Kolibri	Education	nomad	manual	http	8310>18310,8311>18311	768m	amd64,arm64	Learning platform with courses, exercises and progress tracking. Khan Academy and other channels are imported from inside it while online.	Its first-run wizard creates the administrator account.
+kolibri	Kolibri	Education	nomad	manual	http	8310>18310,8311>18311	768m	amd64,arm64	Learning platform with courses, exercises and progress tracking. Khan Academy and other channels are imported from inside it while online.	Its first-run wizard creates the administrator account.	all
 calibre-web	Calibre-Web	Media	nomad	manual	http	8420>18420	512m	amd64,arm64	E-book library and reader for a Calibre collection.	User "admin", password "admin123". Change it at first sign-in. The library location is /books.
 jellyfin	Jellyfin	Media	nomad	manual	http	8490>18490	2g	amd64,arm64	Media server that streams the films and music on this laptop to any device, converting formats a browser cannot play.	Its first-run wizard creates the administrator account. Add /media as the library folder.
-stirling-pdf	Stirling PDF	Productivity	nomad	manual	http	8400>18400	2g	amd64,arm64	Merge, split, compress, convert and sign PDF files.	No sign-in.
+stirling-pdf	Stirling PDF	Productivity	nomad	manual	http	8400>18400	2g	amd64,arm64	Merge, split, compress, convert and sign PDF files.	No sign-in.	gate
 qdrant	Qdrant	AI	nomad	manual	http	-	1g	amd64,arm64	Vector database for semantic search over documents. Answers on this laptop only, at 127.0.0.1:16333.	No sign-in; reachable from this laptop only.
-translate	Translated Library	Education	nomad	manual	http	8460>18460	2g	amd64	The library reader with on-the-fly translation into French, Spanish and German. Fetches its language models on first start, so start it once while online. Needs PORTAL_SCOPE=lan.	No sign-in.
+translate	Translated Library	Education	nomad	manual	http	8460>18460	2g	amd64	The library reader with on-the-fly translation into French, Spanish and German. Fetches its language models on first start, so start it once while online. Needs PORTAL_SCOPE=lan.	No sign-in.	gate
 open-webui	Open WebUI	AI	extra	manual	http	8300>18300	4g	amd64,arm64	Chat with the local Ollama models from any device, with document upload and search. Stands in for the chat screen built into Project NOMAD.	The first account registered becomes the administrator.

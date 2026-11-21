@@ -4,6 +4,12 @@ require __DIR__ . '/../app/bootstrap.php';
 
 use function Offline\{human_bytes, human_duration, utc_display};
 
+// Whoever has not signed in gets the children's front page.
+if (!portal_is_adult()) {
+    require __DIR__ . '/../app/kids-home.php';
+    exit;
+}
+
 $s = portal_status();
 $zims = $s['knowledge']['zims'] ?? [];
 $mediaFolders = $s['media'] ?? [];

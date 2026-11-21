@@ -1,0 +1,10 @@
+[Unit]
+Description=Offline: watch the household's account records
+Documentation=https://github.com/pbassill/offline
+
+[Path]
+PathChanged=/var/lib/offline/accounts/accounts.json
+Unit=offline-accounts.service
+
+[Install]
+WantedBy=multi-user.target

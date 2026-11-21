@@ -11,12 +11,17 @@ declare(strict_types=1);
 
 namespace Offline;
 
-const VERSION = '2.3.0';
+const VERSION = '2.4.0';
 /** The sharing daemon itself, on 127.0.0.1 only. */
 const SYNC_PORT = 47001;
 /** What other systems connect to: the same daemon behind TLS keyed from the house key. */
 const TLS_PORT = 47002;
+/** The children's shelf answers here; the whole library answers adults who have signed in, over TLS. */
 const READER_PORT = 8080;
+const READER_ADULT_PORT = 8443;
+const READER_ADULT_LOCAL = 8090;
+/** The cookie that carries an adult's portal session. "__Host-" makes browsers insist on HTTPS. */
+const SESSION_COOKIE = '__Host-offline-session';
 const SERVICE_USER = 'offline';
 const MDNS_TYPE = '_offline-sync._tcp';
 
@@ -55,6 +60,7 @@ const DEFAULTS = [
     'SYNC_SCAN_FALLBACK' => 'yes',
     'VAULT_SYNC' => 'yes',
     'VAULT_IDLE_MINUTES' => '30',
+    'ACCOUNT_LOGINS' => 'auto',
     'AUTO_PRUNE' => 'yes',
     'DOWNLOAD_CONNECTIONS' => '4',
     'DOWNLOAD_MIN_FREE_GB' => '5',
@@ -106,6 +112,13 @@ function path(string $key): string
         'cache' => '/var/lib/offline/catalogue-cache.json',
         'lock' => '/var/lib/offline/offline.lock',
         'status' => '/run/offline/status.json',
+        'accounts' => '/var/lib/offline/accounts/accounts.json',
+        'sessions' => '/run/offline-auth/sessions.map',
+        'throttle' => '/run/offline-auth/throttle.json',
+        'library_children' => '/var/lib/offline/library-children.xml',
+        'children' => '/usr/local/lib/offline/children.tsv',
+        'children_local' => '/etc/offline/children.local.tsv',
+        'tls' => '/etc/offline/tls',
     ];
     if (!isset($map[$key])) {
         throw new \InvalidArgumentException("Unknown path key: $key");
@@ -458,10 +471,13 @@ function app_index(): array
                 $proxies[] = ['lan' => (int) $m[1], 'local' => (int) $m[2]];
             }
         }
+        // Who may open it: "all" (children too), "own" (it has a sign-in of its own, which is what keeps a
+        // child out), or "gate" (it has none, so the portal's adult session is required, which needs TLS).
+        $audience = in_array($cols[11] ?? '', ['all', 'gate'], true) ? $cols[11] : 'own';
         $apps[$cols[0]] = [
             'id' => $cols[0], 'title' => $cols[1], 'category' => $cols[2], 'set' => $cols[3], 'boot' => $cols[4],
-            'scheme' => $cols[5] === 'https' ? 'https' : 'http', 'proxies' => $proxies, 'memory' => $cols[7],
-            'arch' => explode(',', $cols[8]), 'description' => $cols[9], 'login' => $cols[10],
+            'scheme' => $cols[5] === 'https' || $audience === 'gate' ? 'https' : 'http', 'proxies' => $proxies, 'memory' => $cols[7],
+            'arch' => explode(',', $cols[8]), 'description' => $cols[9], 'login' => $cols[10], 'audience' => $audience,
         ];
     }
     return $apps;
@@ -600,4 +616,66 @@ function places_search(string $query, int $limit = 12): array
         }
     }
     return \array_slice(array_merge($exact, $prefix, $contains), 0, $limit);
+}
+
+// ---------------------------------------------------------------------------
+// Who is looking: sessions, and what is fit for children
+// ---------------------------------------------------------------------------
+
+/**
+ * The adult session a cookie value names, or null. Read-only: sessions are
+ * opened and closed by the sign-in pages, which run in a pool of their own.
+ * The same file is what the web server consults before releasing adult files.
+ */
+function session_lookup(?string $token): ?array
+{
+    if ($token === null || preg_match('/^[A-Za-z0-9_-]{43}$/', $token) !== 1) {
+        return null;
+    }
+    foreach (@file(path('sessions'), FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [] as $line) {
+        if (preg_match('/^([A-Za-z0-9_-]{43}) adult:([a-z][a-z0-9-]{1,30}):(\d{10})$/', $line, $m) === 1 && hash_equals($m[1], $token)) {
+            return (int) $m[3] > time() ? ['user' => $m[2], 'class' => 'adult', 'expires' => (int) $m[3]] : null;
+        }
+    }
+    return null;
+}
+
+/**
+ * Library titles chosen as fit for children: the start of a ZIM name, then a
+ * note. Only these appear on the children's shelf; a title is never assumed
+ * suitable because of its subject.
+ */
+function children_titles(): array
+{
+    static $titles = null;
+    if ($titles !== null) {
+        return $titles;
+    }
+    $titles = [];
+    foreach ([path('children'), path('children_local')] as $file) {
+        foreach (@file($file, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [] as $line) {
+            $cols = array_map('trim', explode("\t", $line));
+            if ($line[0] !== '#' && preg_match('/^[A-Za-z0-9][A-Za-z0-9._+-]{2,120}$/', $cols[0]) === 1) {
+                $titles[$cols[0]] = $cols[1] ?? '';
+            }
+        }
+    }
+    return $titles;
+}
+
+function is_children_title(string $base): bool
+{
+    foreach (children_titles() as $start => $note) {
+        // "vikidia_en_all" covers vikidia_en_all_maxi and vikidia_en_all_nopic, and nothing named vikidia_en_allsorts.
+        if ($base === $start || str_starts_with($base, $start . '_')) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/** Whether a path inside the media folder is in the part set aside for children. */
+function is_children_media(string $relative): bool
+{
+    return $relative === 'children' || str_starts_with($relative, 'children/');
 }

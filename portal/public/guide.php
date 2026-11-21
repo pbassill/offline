@@ -130,6 +130,18 @@ sudo offline games host all
 sudo offline games activities</code></pre>
 </section>
 
+<section aria-labelledby="h-people">
+  <h2 id="h-people">Accounts for adults and children</h2>
+  <p>Anyone who has not signed in sees the children's pages. Adults sign in for everything else. An account made on one system reaches every other system within a few minutes, with the same password for the portal and for logging in.</p>
+  <pre><code>sudo offline user add NAME --adult
+sudo offline user add NAME --child
+offline user
+sudo offline user passwd NAME</code></pre>
+  <p>Films and music put in <code>/srv/offline/media/children</code> can be watched by everyone. The children's shelf holds the library titles listed for children; add your own choices to <code>/etc/offline/children.local.tsv</code> and run <code>sudo offline library</code>.</p>
+  <p class="row-note">A child's login account on a workstation has no administrator rights and cannot reach the internet. Administrator rights are given only on the system where <code>--admin</code> is typed.</p>
+  <p class="row-note">To stop a telephone or tablet warning about this system's certificate, open <a href="/household-ca.crt">/household-ca.crt</a> on it once and compare the fingerprint it shows with <code>offline tls</code>.</p>
+</section>
+
 <section id="vault" aria-labelledby="g-vault">
   <h2 id="g-vault">Keep the family's papers</h2>
   <p>The vault is an encrypted folder for passports, insurance, medical notes and the like. It is created once, on one system, and every other system receives a copy it cannot read. Opening it asks for the passphrase and shows an ordinary folder called <code>Vault</code> in your home folder, for you alone; it closes itself after half an hour without use.</p>
@@ -209,7 +221,9 @@ ollama list</code></pre>
   <h3>Network ports</h3>
   <dl class="facts facts-stack">
     <dt>80</dt><dd>These pages</dd>
-    <dt><?= Offline\READER_PORT ?></dt><dd>Library reader</dd>
+    <dt>443</dt><dd>This portal, encrypted, with sign-in</dd>
+    <dt><?= Offline\READER_PORT ?></dt><dd>The children's shelf</dd>
+    <dt><?= Offline\READER_ADULT_PORT ?></dt><dd>The whole library, for adults who have signed in</dd>
     <dt><?= Offline\TLS_PORT ?></dt><dd>Exchange between systems, encrypted, house key required</dd>
     <dt>11434</dt><dd>Ollama, this system only</dd>
     <dt>8100 to 8500</dt><dd>Apps, each on its own port; see the apps page</dd>

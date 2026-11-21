@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2016  # the PHP snippets passed to php -r are meant to reach it unexpanded
 #
 # Offline test suite. Changes nothing outside a temporary directory.
 #
@@ -80,7 +81,15 @@ for unit in "$ROOT"/systemd/*.service; do
     check "$name confines the crawl in the container instead" grep -q 'confined by the container' "$unit"
     continue
   fi
-  check "$name runs as the offline account" grep -q '^User=offline$' "$unit"
+  case "$name" in
+    # These act on the system itself: the firewall table, login accounts, this system's certificate.
+    offline-children-guard.service | offline-accounts.service | offline-tls-renew.service)
+      check "$name, which must be root, is held to named capabilities" grep -Eq '^CapabilityBoundingSet=CAP_[A-Z_ ]+$' "$unit" ;;
+    offline-sessions.service)
+      check "$name runs as the sign-in account" grep -q '^User=offline-auth$' "$unit" ;;
+    *)
+      check "$name runs as the offline account" grep -q '^User=offline$' "$unit" ;;
+  esac
   check "$name cannot gain privileges" grep -q '^NoNewPrivileges=yes$' "$unit"
   check "$name has a read-only system" grep -q '^ProtectSystem=strict$' "$unit"
   # The download queue exists to fetch from the internet; every other job is held to chosen networks.
@@ -90,14 +99,60 @@ for unit in "$ROOT"/systemd/*.service; do
 done
 check "portal PHP pool disables program execution" grep -q 'disable_functions.*proc_open' "$ROOT/config/php-fpm-offline-portal.conf"
 check "portal PHP pool is confined by open_basedir" grep -q 'open_basedir' "$ROOT/config/php-fpm-offline-portal.conf"
-check "portal sends a Content-Security-Policy" grep -q "default-src 'none'" "$ROOT/config/apache-offline-portal.conf"
-check "the web server and the pages agree on the policy" bash -c "grep -q \"media-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'\" '$ROOT/config/apache-offline-portal.conf' && grep -q \"media-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'\" '$ROOT/portal/app/bootstrap.php'"
+check "portal sends a Content-Security-Policy" grep -q "default-src 'none'" "$ROOT/config/apache-offline-portal-common.conf"
+check "the web server and the pages agree on the policy" bash -c "grep -q \"media-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'\" '$ROOT/config/apache-offline-portal-common.conf' && grep -q \"media-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'\" '$ROOT/portal/app/bootstrap.php'"
 refute "portal loads nothing from another site" grep -rEq '(src|href)="https?://' "$ROOT/portal/app" "$ROOT/portal/public/index.php" "$ROOT/portal/public/library.php" "$ROOT/portal/public/media.php" "$ROOT/portal/public/play.php" "$ROOT/portal/public/peers.php"
 refute "portal has no inline styles or scripts" grep -rEq 'style="|<script>|onclick=' "$ROOT/portal/app" "$ROOT/portal/public"/*.php
 check "vendored assets match their checksums" bash -c "cd '$ROOT/portal/public/assets' && sha256sum --quiet -c CHECKSUMS"
 check "the map viewer may only talk to this laptop" grep -q "connect-src 'self'; worker-src 'self'" "$ROOT/portal/public/maps.php"
 check "the map tool is pinned by checksum for both architectures" bash -c "grep -Eq '^readonly PMTILES_SHA256_AMD64=\"[0-9a-f]{64}\"' '$ROOT/install.sh' && grep -Eq '^readonly PMTILES_SHA256_ARM64=\"[0-9a-f]{64}\"' '$ROOT/install.sh'"
 check "map fonts and symbols are pinned by commit" grep -Eq "BASEMAP_ASSETS_COMMIT = '[0-9a-f]{40}'" "$ROOT/lib/maps.php"
+
+# Accounts, sign-in and what children may reach.
+GATE="$ROOT/config/apache-offline-session-gate.conf"
+SITE="$ROOT/config/apache-offline-portal.conf"
+COMMON="$ROOT/config/apache-offline-portal-common.conf"
+check "the session cookie is one browsers send over HTTPS only" bash -c "grep -q '__Host-offline-session=' '$GATE' && grep -q \"const SESSION_COOKIE = '__Host-offline-session';\" '$ROOT/lib/core.php' && grep -q 'Secure; HttpOnly; SameSite=Strict' '$ROOT/portal/public/account/signin.php'"
+check "a session is recognised by 256 random bits and nothing else" grep -q '=(\[A-Za-z0-9_-\]{43})' "$GATE"
+check "the plain site never checks a session, so nothing there is released to one" bash -c "[[ \$(sed -n '/<VirtualHost \\*:80>/,/<\\/VirtualHost>/p' '$SITE' | grep -c 'session-gate') -eq 0 ]]"
+check "the encrypted site and the adults' library check the session" bash -c "[[ \$(grep -c 'Include /etc/apache2/offline/session-gate.conf' '$SITE') -eq 2 ]]"
+check "the adults' library answers only an adult who has signed in" bash -c "sed -n '/<VirtualHost \\*:8443>/,/<\\/VirtualHost>/p' '$SITE' | grep -q 'Require env OFFLINE_ADULT'"
+check "the adults' library is proxied from this system only" grep -q 'ProxyPass / http://127.0.0.1:8090/' "$SITE"
+check "films are released only to an adult who has signed in" bash -c "sed -n '/<Directory \\/srv\\/offline\\/media>/,/<\\/Directory>/p' '$COMMON' | grep -q 'Require env OFFLINE_ADULT'"
+refute "the children's folder asks for no session" bash -c "sed -n '/<Directory \\/srv\\/offline\\/media\\/children>/,/<\\/Directory>/p' '$COMMON' | grep -q 'OFFLINE_ADULT'"
+check "of the certificate folder only the authority's certificate is served" bash -c "sed -n '/<Directory \\/etc\\/offline\\/tls>/,/<\\/Directory>/p' '$COMMON' | grep -q 'Require all denied' && grep -q '<Files \"ca.crt\">' '$COMMON'"
+# shellcheck disable=SC2016
+check "signing in is redirected off the plain site" grep -q 'RewriteRule ^/account(/.\*)?\$ https://%1/account\$1 \[R=302,L\]' "$SITE"
+check "only the sign-in pages accept a form" bash -c "[[ \$(grep -c 'Require method GET HEAD POST' '$SITE' '$COMMON' | awk -F: '{n += \$2} END {print n}') -eq 1 ]]"
+refute "no site sends Strict-Transport-Security, which would break the plain-HTTP ports" grep -q '^ *Header.*Strict-Transport-Security' "$SITE" "$COMMON"
+AUTH_POOL="$ROOT/config/php-fpm-offline-auth.conf"
+check "the sign-in pages run as an account of their own" bash -c "grep -q '^user = offline-auth$' '$AUTH_POOL' && grep -q '^user = offline-web$' '$ROOT/config/php-fpm-offline-portal.conf'"
+check "the sign-in pool runs no programs and opens no connections" bash -c "grep -q 'disable_functions.*proc_open.*fsockopen.*curl_exec' '$AUTH_POOL'"
+refute "the sign-in pool cannot reach the content" grep -q 'open_basedir.*/srv/offline' "$AUTH_POOL"
+check "the ordinary pages cannot write a session, or any other file" grep -q 'disable_functions.*,rename,.*,file_put_contents,' "$ROOT/config/php-fpm-offline-portal.conf"
+check "account records are offered read-only, one file and nothing else" bash -c "sed -n '/^\\[accounts\\]/,/^\\[broadcasts\\]/p' '$ROOT/config/rsyncd.conf' | grep -q 'include = /accounts.json' && sed -n '/^\\[accounts\\]/,/^\\[broadcasts\\]/p' '$ROOT/config/rsyncd.conf' | grep -q 'exclude = \\*' && ! sed -n '/^\\[accounts\\]/,/^\\[broadcasts\\]/p' '$ROOT/config/rsyncd.conf' | grep -q 'read only = no'"
+check "the session folder exists before the web server starts, in memory" grep -q '^f /run/offline-auth/sessions.map 0640 offline-auth offline-session' "$ROOT/config/tmpfiles-offline.conf"
+GUARD="$ROOT/config/children-guard.nft"
+check "the children's guard refuses whatever it does not name" grep -q 'counter reject with icmpx type admin-prohibited' "$GUARD"
+check "the children's guard recognises a child by group" grep -q 'meta skgid "offline-child" jump children' "$GUARD"
+refute "the children's guard opens no adult service" grep -Eq 'dport \{[^}]*\b(8090|8443|3142|47001|47002|11434|22)\b' "$GUARD"
+if have nft && getent group offline-child >/dev/null && nft -c -f "$GUARD" 2>/dev/null; then
+  pass "the firewall accepts the children's guard"
+else
+  note "nft, the offline-child group or the right to use them is missing: the children's guard was not parsed"
+fi
+check "the job that applies replicated accounts has no network and a read-only system" bash -c "grep -q '^IPAddressDeny=any$' '$ROOT/systemd/offline-accounts.service' && grep -q '^RestrictAddressFamilies=AF_UNIX AF_NETLINK$' '$ROOT/systemd/offline-accounts.service' && grep -q '^ReadWritePaths=/etc /home' '$ROOT/systemd/offline-accounts.service'"
+check "replication runs the apply in the mode that leaves administrators alone" grep -q '^ExecStart=/usr/local/bin/offline user apply --replicated$' "$ROOT/systemd/offline-accounts.service"
+check "the installer keeps child accounts out of SSH" grep -q "DenyGroups offline-child" "$ROOT/install.sh"
+# shellcheck disable=SC2016
+check "the installer closes the library and the films to the children's group" grep -q 'setfacl -m g:offline-child:---,m::rwx "$SHARE_ROOT/knowledge" "$SHARE_ROOT/media"' "$ROOT/install.sh"
+check "the children's shelf reader serves the children's index" grep -q -- '--library /var/lib/offline/library-children.xml$' "$ROOT/systemd/offline-reader.service"
+check "the adults' reader listens on this system only" bash -c "grep -q -- '--address=127.0.0.1 --port=8090' '$ROOT/systemd/offline-reader-adults.service' && grep -q '^IPAddressAllow=localhost$' '$ROOT/systemd/offline-reader-adults.service'"
+check "every page is for adults unless listed as public" grep -q "portal_require_adult();" "$ROOT/portal/app/bootstrap.php"
+# shellcheck disable=SC2016
+check "an application with no sign-in of its own is put behind the portal's, over TLS" php -r 'require $argv[1] . "/lib/cli.php"; define("X", 1); $apps = Offline\app_index(); foreach (["cyberchef", "it-tools", "stirling-pdf", "translate", "meshtastic-web", "meshcore-web"] as $id) { $c = Offline\app_proxy_config($apps[$id]); if ($apps[$id]["scheme"] !== "https" || !str_contains($c, "Require env OFFLINE_ADULT") || !str_contains($c, "session-gate.conf") || !str_contains($c, "SSLEngine on")) { fwrite(STDERR, $id); exit(1); } } exit(0);' "$ROOT"
+# shellcheck disable=SC2016
+check "an application with its own sign-in keeps to it" php -r 'require $argv[1] . "/lib/cli.php"; $apps = Offline\app_index(); foreach (["jellyfin", "vaultwarden", "kolibri", "excalidraw"] as $id) { if (str_contains(Offline\app_proxy_config($apps[$id]), "OFFLINE_ADULT")) { exit(1); } } exit($apps["kolibri"]["audience"] === "all" && $apps["jellyfin"]["audience"] === "own" ? 0 : 1);' "$ROOT"
 
 # Every application unit must keep the three rules in lib/apps.php.
 APP_COUNT=0
@@ -155,8 +210,8 @@ if [[ -x /usr/libexec/podman/quadlet ]]; then
   cp "$ROOT"/games/*.container "$ROOT/config/offline-routing.container" "$QUADLET_GAMES/"
   refute "Podman accepts the world and routing units" bash -c "QUADLET_UNIT_DIRS='$QUADLET_GAMES' /usr/libexec/podman/quadlet -dryrun 2>&1 | grep -Eiq 'unsupported|converting|error'"
 fi
-check "directions pass through the portal only when switched on" grep -q '<IfDefine OFFLINE_ROUTING>' "$ROOT/config/apache-offline-portal.conf"
-check "the portal passes on route requests and nothing else" bash -c "[[ \$(grep -c 'ProxyPass ' '$ROOT/config/apache-offline-portal.conf') -eq 1 ]] && grep -q 'ProxyPass /valhalla/route http://127.0.0.1:18700/route' '$ROOT/config/apache-offline-portal.conf'"
+check "directions pass through the portal only when switched on" grep -q '<IfDefine OFFLINE_ROUTING>' "$ROOT/config/apache-offline-portal-common.conf"
+check "the portal passes on route requests and nothing else" bash -c "[[ \$(grep -c 'ProxyPass ' '$ROOT/config/apache-offline-portal-common.conf') -eq 1 ]] && grep -q 'ProxyPass /valhalla/route http://127.0.0.1:18700/route' '$ROOT/config/apache-offline-portal-common.conf'"
 check "the vault module is read-only like the rest" bash -c "sed -n '/^\\[vault\\]/,/^\\[broadcasts\\]/p' '$ROOT/config/rsyncd.conf' | grep -vq 'read only = no'"
 check "the installer installs the PHP text functions the commands use" grep -q 'php-mbstring' "$ROOT/install.sh"
 # Every package the installer asks apt for must be in the list that fills the package cache.
@@ -231,12 +286,12 @@ make_root() {
   mkdir -p "$1"/etc/offline "$1"/usr/local/lib/offline "$1"/srv/offline/knowledge/zim \
     "$1"/srv/offline/media/movies "$1"/srv/offline/media/music "$1"/var/lib/offline "$1"/run/offline \
     "$1"/var/lib/offline/broadcasts "$1"/var/lib/offline/inbox "$1"/var/lib/offline/outbox "$1"/srv/offline/staging \
-    "$1"/srv/offline/vault "$1"/usr/games \
+    "$1"/srv/offline/vault "$1"/usr/games "$1"/run/offline-auth "$1"/etc/offline/tls \
     "$1"/srv/offline/maps "$1"/srv/offline/radio "$1"/srv/offline/apps "$1"/sys/class/power_supply/BAT0 \
     "$1"/sys/bus/usb/devices/1-1 "$1"/sys/bus/usb/devices/1-2
   cp "$ROOT/config/catalogue.tsv" "$ROOT/config/maps.tsv" "$ROOT/config/sites.tsv" "$1/usr/local/lib/offline/"
   cp -r "$ROOT/apps" "$ROOT/data" "$ROOT/games" "$1/usr/local/lib/offline/"
-  cp "$ROOT/config/packages.list" "$ROOT/config/offline-routing.container" "$1/usr/local/lib/offline/"
+  cp "$ROOT/config/packages.list" "$ROOT/config/offline-routing.container" "$ROOT/config/children.tsv" "$1/usr/local/lib/offline/"
   echo 0bda >"$1/sys/bus/usb/devices/1-1/idVendor"; echo 2838 >"$1/sys/bus/usb/devices/1-1/idProduct"
   echo 10c4 >"$1/sys/bus/usb/devices/1-2/idVendor"; echo ea60 >"$1/sys/bus/usb/devices/1-2/idProduct"
   cp "$ROOT/config/offline.conf" "$1/etc/offline/"
@@ -371,6 +426,131 @@ check "a link in staging is never published" bash -c "! find '$A/srv/offline/med
 check "the item is recorded as published" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' queue | grep -q 'published'"
 check "a queued item can be removed" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' queue remove '$QID' && ! grep -q '$QID' '$A/var/lib/offline/queue.json' && [[ ! -e '$A/srv/offline/staging/$QID' ]]"
 check "status reports the role and the queue" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' status --json | php -r '\$s = json_decode(stream_get_contents(STDIN), true); exit(\$s[\"role\"] === \"workstation\" && \$s[\"queue\"][\"total\"] === 3 ? 0 : 1);'"
+
+echo
+echo "People"
+check "with no accounts the command says what that means" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' user | grep -q 'nobody can sign in for the rest'"
+check "an adult's account can be made" bash -c "printf 'correct horse battery\n' | OFFLINE_PREFIX='$A' '$ROOT/bin/offline' user add peter --adult --full 'Peter Example' | grep -q 'Account peter created (adult)'"
+check "a child's account can be made" bash -c "printf 'tigers7\n' | OFFLINE_PREFIX='$A' '$ROOT/bin/offline' user add twin-one --child | grep -q 'the children.s pages need no sign-in'"
+ACCOUNTS="$A/var/lib/offline/accounts/accounts.json"
+check "the records are closed to other accounts" bash -c "[[ \$(stat -c %a '$ACCOUNTS') == 640 ]]"
+refute "no password is stored, only hashes" grep -q -e 'correct horse' -e tigers7 "$ACCOUNTS"
+# shellcheck disable=SC2016
+check "an adult has an Argon2id hash for the portal and a login hash; a child has no portal hash" php -r '$a = json_decode(file_get_contents($argv[1]), true)["accounts"]; exit(str_starts_with($a["peter"]["portal"], "\$argon2id\$v=19\$m=65536,t=3,p=1\$") && str_starts_with($a["peter"]["login"], "\$6\$rounds=200000\$") && $a["twin-one"]["portal"] === null && str_starts_with($a["twin-one"]["login"], "\$6\$") ? 0 : 1);' "$ACCOUNTS"
+refute "the same name cannot be made twice" bash -c "printf 'another long password\n' | OFFLINE_PREFIX='$A' '$ROOT/bin/offline' user add peter --adult"
+refute "an account must be one kind or the other" bash -c "printf 'another long password\n' | OFFLINE_PREFIX='$A' '$ROOT/bin/offline' user add both --adult --child"
+refute "a child cannot be an administrator" bash -c "printf 'tigers7\n' | OFFLINE_PREFIX='$A' '$ROOT/bin/offline' user add twin-two --child --admin"
+refute "a short password is refused for an adult" bash -c "printf 'short\n' | OFFLINE_PREFIX='$A' '$ROOT/bin/offline' user add weak --adult"
+refute "a password containing the account name is refused" bash -c "printf 'isabella-isabella\n' | OFFLINE_PREFIX='$A' '$ROOT/bin/offline' user add isabella --adult"
+refute "a password is never taken from the command line" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' user add argv --adult 'a long enough password' </dev/null"
+for bad in root offline www-data Peter 'a b' 'x;id' ../x a; do
+  refute "the account name \"$bad\" is refused" bash -c "printf 'a long enough password\n' | OFFLINE_PREFIX='$A' '$ROOT/bin/offline' user add '$bad' --adult"
+done
+refute "a full name with markup is refused" bash -c "printf 'a long enough password\n' | OFFLINE_PREFIX='$A' '$ROOT/bin/offline' user add markup --adult --full '<b>x</b>'"
+refute "a password file others can read is refused" bash -c "echo 'a long enough password' >'$WORK/loose.pw'; chmod 644 '$WORK/loose.pw'; OFFLINE_PREFIX='$A' '$ROOT/bin/offline' user add filed --adult --password-file '$WORK/loose.pw'"
+
+# Signing in, as the sign-in pages do it.
+auth() { php -r 'define("OFFLINE_PREFIX", $argv[1]); require $argv[2] . "/lib/core.php"; require $argv[2] . "/lib/auth.php"; eval($argv[3]);' "$A" "$ROOT" "$1"; }
+check "the right password opens a session" auth '$r = Offline\sign_in("peter", "correct horse battery", "192.168.7.20"); exit($r["ok"] && preg_match("/^[A-Za-z0-9_-]{43}$/", $r["token"]) === 1 ? 0 : 1);'
+check "the session file holds what the web server looks for" grep -Eq '^[A-Za-z0-9_-]{43} adult:peter:[0-9]{10}$' "$A/run/offline-auth/sessions.map"
+check "the session file is closed to other accounts" bash -c "[[ \$(stat -c %a '$A/run/offline-auth/sessions.map') == 640 ]]"
+TOKEN="$(cut -d' ' -f1 "$A/run/offline-auth/sessions.map" | head -n 1)"
+check "the pages recognise the session" auth "\$s = Offline\\session_lookup('$TOKEN'); exit(\$s !== null && \$s['user'] === 'peter' ? 0 : 1);"
+check "a made-up token is nobody" auth 'exit(Offline\session_lookup(str_repeat("A", 43)) === null && Offline\session_lookup("../../etc/passwd") === null && Offline\session_lookup(null) === null ? 0 : 1);'
+check "the name is not case-sensitive, the password is" auth 'exit(Offline\sign_in("Peter", "correct horse battery", "192.168.7.21")["ok"] && !Offline\sign_in("peter", "Correct horse battery", "192.168.7.21")["ok"] ? 0 : 1);'
+check "a child's account cannot sign in for more" auth 'exit(Offline\sign_in("twin-one", "tigers7", "192.168.7.22")["ok"] ? 1 : 0);'
+check "an unknown name is refused in the same way as a wrong password" auth '$a = Offline\sign_in("nobody-here", "x", "192.168.7.23"); $b = Offline\sign_in("peter", "x", "192.168.7.24"); exit($a === $b && $a === ["ok" => false, "wait" => 0] ? 0 : 1);'
+check "after five wrong guesses the right password is not heard either" auth 'for ($i = 0; $i < 5; $i++) { Offline\sign_in("peter", "wrong guess $i", "192.168.7.30"); } $r = Offline\sign_in("peter", "correct horse battery", "192.168.7.30"); exit(!$r["ok"] && $r["wait"] > 800 ? 0 : 1);'
+check "another address is not held up by that" auth 'exit(Offline\sign_in("peter", "correct horse battery", "192.168.7.31")["ok"] ? 0 : 1);'
+check "one address guessing at many names is held too" auth 'for ($i = 0; $i < 20; $i++) { Offline\sign_in("name$i", "wrong", "192.168.7.40"); } exit(Offline\sign_in("peter", "correct horse battery", "192.168.7.40")["wait"] > 0 ? 0 : 1);'
+refute "the guessing record holds no names or addresses" grep -q -e peter -e 192.168 "$A/run/offline-auth/throttle.json"
+check "an over-long password is refused without being hashed" auth '$t = microtime(true); $r = Offline\sign_in("peter", str_repeat("x", 100000), "192.168.7.50"); exit(!$r["ok"] && microtime(true) - $t < 0.1 ? 0 : 1);'
+check "a new password ends the account's sessions" bash -c "printf 'a different long password\n' | OFFLINE_PREFIX='$A' '$ROOT/bin/offline' user passwd peter | grep -Eq 'and [0-9]+ portal sessions? ended' && [[ ! -s '$A/run/offline-auth/sessions.map' ]]"
+check "the old password no longer works and the new one does" auth 'exit(!Offline\sign_in("peter", "correct horse battery", "192.168.7.60")["ok"] && Offline\sign_in("peter", "a different long password", "192.168.7.61")["ok"] ? 0 : 1);'
+# A session from before a change made on another system: the minute-by-minute check ends it.
+sed -i -E 's/"updated": "[^"]+"/"updated": "2099-01-01T00:00:00Z"/' "$ACCOUNTS"
+check "a record dated in the future is not believed" auth 'exit(Offline\accounts_load() === [] ? 0 : 1);'
+sed -i -E "s/\"updated\": \"[^\"]+\"/\"updated\": \"$(date -u -d '+30 seconds' +%Y-%m-%dT%H:%M:%SZ)\"/" "$ACCOUNTS"
+check "a session older than its account's last change is ended" bash -c "[[ -s '$A/run/offline-auth/sessions.map' ]] && OFFLINE_PREFIX='$A' '$ROOT/bin/offline' user prune-sessions && [[ ! -s '$A/run/offline-auth/sessions.map' ]]"
+sed -i -E "s/\"updated\": \"[^\"]+\"/\"updated\": \"$(date -u -d '-1 hour' +%Y-%m-%dT%H:%M:%SZ)\"/" "$ACCOUNTS"
+echo "$(printf 'B%.0s' {1..43}) adult:peter:1000000000" >"$A/run/offline-auth/sessions.map"
+check "a session that has run out is nobody, and is cleared away" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' user prune-sessions && [[ ! -s '$A/run/offline-auth/sessions.map' ]]"
+check "a locked account cannot sign in" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' user lock peter >/dev/null && ! php -r 'define(\"OFFLINE_PREFIX\", \$argv[1]); require \$argv[2] . \"/lib/core.php\"; require \$argv[2] . \"/lib/auth.php\"; exit(Offline\\sign_in(\"peter\", \"a different long password\", \"192.168.7.70\")[\"ok\"] ? 0 : 1);' '$A' '$ROOT'"
+check "and can again once unlocked" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' user unlock peter >/dev/null && php -r 'define(\"OFFLINE_PREFIX\", \$argv[1]); require \$argv[2] . \"/lib/core.php\"; require \$argv[2] . \"/lib/auth.php\"; exit(Offline\\sign_in(\"peter\", \"a different long password\", \"192.168.7.71\")[\"ok\"] ? 0 : 1);' '$A' '$ROOT'"
+# shellcheck disable=SC2016
+check "records from another system are taken only if newer and exactly the right shape" php -r 'require $argv[1] . "/lib/core.php"; require $argv[1] . "/lib/auth.php";
+  $ok = ["class" => "adult", "full" => "A", "portal" => null, "login" => null, "locked" => false, "removed" => false, "updated" => "2026-01-02T00:00:00Z"];
+  $mine = ["anna" => $ok, "ben" => $ok];
+  $theirs = [
+    "anna" => ["updated" => "2026-01-01T00:00:00Z", "full" => "Older"] + $ok,
+    "ben" => ["updated" => "2026-01-03T00:00:00Z", "full" => "Newer"] + $ok,
+    "carl" => $ok,
+    "root" => $ok, "Dora" => $ok, "x;y" => $ok,
+    "extra" => $ok + ["sudo" => true],
+    "future" => ["updated" => "2099-01-01T00:00:00Z"] + $ok,
+    "kid" => ["class" => "child", "portal" => "\$argon2id\$v=19\$m=65536,t=3,p=1\$a1BXWEI3QkFBbUlYc3VwUQ\$o9N9s0iypp1szY4he7O5gOiVoSgkymqjBOln20kCMys"] + $ok,
+    "weak" => ["portal" => "\$1\$abc\$def"] + $ok,
+    "shell" => ["login" => "\$6\$rounds=200000\$abcdefghijklmnop\$x\nroot:x"] + $ok,
+    "gecos" => ["full" => "a:b,c"] + $ok,
+  ];
+  [$merged, $changed] = Offline\accounts_merge($mine, $theirs);
+  exit($changed === ["ben", "carl"] && $merged["anna"]["full"] === "A" && $merged["ben"]["full"] === "Newer" && array_keys($merged) === ["anna", "ben", "carl"] ? 0 : 1);' "$ROOT"
+check "removing an account keeps only a marker, without its hashes" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' user remove twin-one >/dev/null && php -r '\$r = json_decode(file_get_contents(\$argv[1]), true)[\"accounts\"][\"twin-one\"]; exit(\$r[\"removed\"] === true && \$r[\"portal\"] === null && \$r[\"login\"] === null ? 0 : 1);' '$ACCOUNTS' && ! OFFLINE_PREFIX='$A' '$ROOT/bin/offline' user | grep -q twin-one"
+check "a removed name can be used again" bash -c "printf 'tigers7\n' | OFFLINE_PREFIX='$A' '$ROOT/bin/offline' user add twin-one --child >/dev/null"
+check "an account for the portal alone has no login hash to replicate" bash -c "printf 'grandmother visits often\n' | OFFLINE_PREFIX='$A' '$ROOT/bin/offline' user add granny --adult --portal-only | grep -q 'none, on any system' && php -r 'exit(json_decode(file_get_contents(\$argv[1]), true)[\"accounts\"][\"granny\"][\"login\"] === null ? 0 : 1);' '$ACCOUNTS'"
+# shellcheck disable=SC2016
+check "login accounts are wanted everywhere at home, and nowhere on a server facing the internet" php -r 'define("OFFLINE_PREFIX", $argv[2]); require $argv[1] . "/lib/cli.php";
+  $adult = ["class" => "adult", "login" => "x"]; $child = ["class" => "child", "login" => "x"]; $portal = ["class" => "adult", "login" => null];
+  $home = Offline\login_wanted($adult) && !Offline\login_wanted($child) && !Offline\login_wanted($portal);
+  mkdir(OFFLINE_PREFIX . "/usr/sbin", 0755, true); touch(OFFLINE_PREFIX . "/usr/sbin/gdm3"); chmod(OFFLINE_PREFIX . "/usr/sbin/gdm3", 0755);
+  exit($home && Offline\login_wanted($child) ? 0 : 1);' "$ROOT" "$A"
+sed -i 's/^SYNC_EXPOSE=.*/SYNC_EXPOSE=internet/' "$A/etc/offline/offline.conf"
+# shellcheck disable=SC2016
+check "a server facing the internet makes no login accounts from the records unless told to" php -r 'define("OFFLINE_PREFIX", $argv[2]); require $argv[1] . "/lib/cli.php"; exit(Offline\login_wanted(["class" => "adult", "login" => "x"]) ? 1 : 0);' "$ROOT" "$A"
+sed -i 's/^SYNC_EXPOSE=.*/SYNC_EXPOSE=lan/' "$A/etc/offline/offline.conf"
+
+echo
+echo "Certificates"
+if have openssl; then
+  check "this system has a certificate signed by the household's authority" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' tls renew >/dev/null && openssl verify -CAfile '$A/etc/offline/tls/ca.crt' '$A/etc/offline/tls/offline.crt' >/dev/null 2>&1"
+  check "its key is private" bash -c "[[ \$(stat -c %a '$A/etc/offline/tls/offline.key') == 600 ]]"
+  refute "the authority's own key is left nowhere on disc" bash -c "find '$A/etc/offline/tls' -name 'ca.key' -o -name 'ca.der' -o -name '.work*' | grep -q ."
+  check "the authority may sign only for names and addresses inside a home" bash -c "openssl x509 -in '$A/etc/offline/tls/ca.crt' -noout -text | grep -A3 'Name Constraints: critical' | grep -q 'DNS:.local'"
+  # A second system holding the same house key arrives at the same authority by itself.
+  mkdir -p "$B/etc/offline/tls"
+  echo "$KEY" | OFFLINE_PREFIX="$B" "$ROOT/bin/offline" key set - >/dev/null
+  OFFLINE_PREFIX="$B" "$ROOT/bin/offline" tls renew >/dev/null
+  check "a device that trusts one system's authority accepts another system's certificate" bash -c "openssl verify -CAfile '$A/etc/offline/tls/ca.crt' '$B/etc/offline/tls/offline.crt' >/dev/null 2>&1"
+  T="$WORK/t"
+  make_root "$T"
+  echo 'ZZZZZ-ZZZZZ-ZZZZZ-ZZZZZ-ZZZZZ' | OFFLINE_PREFIX="$T" "$ROOT/bin/offline" key set - >/dev/null
+  OFFLINE_PREFIX="$T" "$ROOT/bin/offline" tls renew >/dev/null
+  refute "a household with another key is another authority" bash -c "openssl verify -CAfile '$A/etc/offline/tls/ca.crt' '$T/etc/offline/tls/offline.crt' >/dev/null 2>&1"
+  # Someone who had the house key could sign what they liked; devices must still refuse it for a public name.
+  # shellcheck disable=SC2016
+  php -r 'define("OFFLINE_PREFIX", $argv[2]); require $argv[1] . "/lib/cli.php"; file_put_contents($argv[3] . "/rogue-ca.der", Offline\household_ca_der());' "$ROOT" "$A" "$WORK"
+  openssl ec -inform DER -in "$WORK/rogue-ca.der" -out "$WORK/rogue-ca.key" 2>/dev/null
+  openssl req -new -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -keyout "$WORK/rogue.key" -subj '/CN=www.example.com' -out "$WORK/rogue.csr" 2>/dev/null
+  printf 'subjectAltName=DNS:www.example.com\nextendedKeyUsage=serverAuth\n' >"$WORK/rogue.ext"
+  openssl x509 -req -in "$WORK/rogue.csr" -CA "$A/etc/offline/tls/ca.crt" -CAkey "$WORK/rogue-ca.key" -set_serial 7 -days 30 -extfile "$WORK/rogue.ext" -out "$WORK/rogue.crt" 2>/dev/null
+  check "the test could sign a certificate for a public name with the authority's key" test -s "$WORK/rogue.crt"
+  refute "and such a certificate is refused, because of the limit written into the authority" bash -c "openssl verify -CAfile '$A/etc/offline/tls/ca.crt' '$WORK/rogue.crt' >/dev/null 2>&1"
+  check "a certificate already in order is left as it is" bash -c "before=\$(sha256sum '$A/etc/offline/tls/offline.crt'); OFFLINE_PREFIX='$A' '$ROOT/bin/offline' tls renew >/dev/null; [[ \"\$before\" == \"\$(sha256sum '$A/etc/offline/tls/offline.crt')\" ]]"
+  check "the command reports the authority's fingerprint to check on a device" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' tls | grep -Eq 'Fingerprint +([0-9A-F]{2}:){31}[0-9A-F]{2}'"
+else
+  note "openssl not installed: certificates not exercised"
+fi
+
+echo
+echo "The children's shelf"
+# shellcheck disable=SC2016
+check "a title is on the shelf only if it is listed" php -r 'define("OFFLINE_PREFIX", $argv[2]); require $argv[1] . "/lib/core.php"; file_put_contents(OFFLINE_PREFIX . "/etc/offline/children.local.tsv", "# ours\nstorybook_en_all\tOur own\n../../etc\tbad\n");
+  exit(Offline\is_children_title("vikidia_en_all_maxi") && Offline\is_children_title("vikidia_en_all") && Offline\is_children_title("storybook_en_all_maxi")
+    && !Offline\is_children_title("vikidia_en_allsorts") && !Offline\is_children_title("wikipedia_en_all_maxi") && !Offline\is_children_title("wikipedia_en_medicine_maxi")
+    && !Offline\is_children_title("wikipedia_en-simple_all_maxi") && !isset(Offline\children_titles()["../../etc"]) ? 0 : 1);' "$ROOT" "$A"
+# shellcheck disable=SC2016
+check "only the children's folder of the media counts as theirs" php -r 'require $argv[1] . "/lib/core.php"; exit(Offline\is_children_media("children") && Offline\is_children_media("children/films") && !Offline\is_children_media("childrens") && !Offline\is_children_media("movies") && !Offline\is_children_media("movies/children") && !Offline\is_children_media("") ? 0 : 1);' "$ROOT"
+check "the catalogue has a children's pack, all of it on the shelf" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' catalogue children | grep -q Vikidia && for base in \$(awk -F'\t' '\$1 ~ /^children/ {print \$2}' '$ROOT/config/catalogue.tsv'); do php -r 'require \$argv[1] . \"/lib/core.php\"; exit(Offline\\is_children_title(\$argv[2]) ? 0 : 1);' '$ROOT' \"\$base\" || exit 1; done"
 
 echo
 echo "Games"
@@ -753,6 +933,28 @@ if have rsync && have stunnel; then
   check "it remembers what the user has been shown" bash -c "[[ \$(wc -l <'$WORK/home/state/offline/broadcasts-seen') -ge 3 ]]"
 
   echo
+  echo "Accounts between systems"
+  printf 'made on another system\n' | OFFLINE_PREFIX="$B" "$ROOT/bin/offline" user add visitor --adult >/dev/null
+  check "an account made on one system reaches another at its next sync" bash -c "OFFLINE_PREFIX='$A' OFFLINE_TEST_PEERS='127.0.0.1:$BPORT' '$ROOT/bin/offline' sync | grep -q 'accounts: 1 account updated (visitor)'"
+  check "and can sign in there" auth 'exit(Offline\sign_in("visitor", "made on another system", "192.168.7.80")["ok"] ? 0 : 1);'
+  check "what was already held is not fetched again" bash -c "! OFFLINE_PREFIX='$A' OFFLINE_TEST_PEERS='127.0.0.1:$BPORT' '$ROOT/bin/offline' sync | grep -q 'accounts:'"
+  sleep 1
+  OFFLINE_PREFIX="$B" "$ROOT/bin/offline" user lock visitor >/dev/null
+  check "a lock follows, and the account can no longer sign in" bash -c "OFFLINE_PREFIX='$A' OFFLINE_TEST_PEERS='127.0.0.1:$BPORT' '$ROOT/bin/offline' sync >/dev/null; ! php -r 'define(\"OFFLINE_PREFIX\", \$argv[1]); require \$argv[2] . \"/lib/core.php\"; require \$argv[2] . \"/lib/auth.php\"; exit(Offline\\sign_in(\"visitor\", \"made on another system\", \"192.168.7.81\")[\"ok\"] ? 0 : 1);' '$A' '$ROOT'"
+  sleep 1
+  OFFLINE_PREFIX="$B" "$ROOT/bin/offline" user remove visitor >/dev/null
+  check "a removal follows" bash -c "OFFLINE_PREFIX='$A' OFFLINE_TEST_PEERS='127.0.0.1:$BPORT' '$ROOT/bin/offline' sync >/dev/null; ! OFFLINE_PREFIX='$A' '$ROOT/bin/offline' user | grep -q visitor"
+  # A system holding the key, but not honest: records that are not exactly the right shape change nothing.
+  cp "$A/var/lib/offline/accounts/accounts.json" "$WORK/accounts-before.json"
+  php -r '$ok = ["class" => "adult", "full" => "", "portal" => null, "login" => null, "locked" => false, "removed" => false, "updated" => gmdate("Y-m-d\\TH:i:s\\Z")];
+    file_put_contents($argv[1], json_encode(["accounts" => ["root" => $ok, "x;reboot" => $ok, "sudoer" => $ok + ["groups" => ["sudo"]], "kid" => ["class" => "wizard"] + $ok,
+      "hash" => ["login" => "\$6\$rounds=200000\$abcdefghijklmnop\$x\nroot::0:0::/root:/bin/sh"] + $ok, "ahead" => ["updated" => "2099-01-01T00:00:00Z"] + $ok]]));' "$B/var/lib/offline/accounts/accounts.json"
+  check "malformed and overreaching records from another system change nothing" bash -c "OFFLINE_PREFIX='$A' OFFLINE_TEST_PEERS='127.0.0.1:$BPORT' '$ROOT/bin/offline' sync >/dev/null; cmp -s '$A/var/lib/offline/accounts/accounts.json' '$WORK/accounts-before.json'"
+  head -c 2000000 /dev/zero >"$B/var/lib/offline/accounts/accounts.json"
+  check "an oversized accounts file is not fetched" bash -c "OFFLINE_PREFIX='$A' OFFLINE_TEST_PEERS='127.0.0.1:$BPORT' '$ROOT/bin/offline' sync >/dev/null; cmp -s '$A/var/lib/offline/accounts/accounts.json' '$WORK/accounts-before.json' && ! ls '$A/var/lib/offline/' | grep -q '^accounts-'"
+  refute "the accounts share offers nothing but the one file" bash -c "echo secret >'$B/var/lib/offline/accounts/other.txt'; RSYNC_PASSWORD='$KEY' rsync 'rsync://offline@127.0.0.1:$BDPORT/accounts/other.txt' '$WORK/stolen.txt' 2>/dev/null"
+
+  echo
   echo "Vault exchange"
   # B holds ciphertext, as a real vault would leave it, and some things that are not ciphertext.
   mkdir -p "$B/srv/offline/vault/H4gUTQjnIQmBDDyYGjEKDw"
@@ -857,7 +1059,18 @@ if have curl; then
   mkdir -p "$WORK/site/app" "$WORK/site/public"
   cp -r "$ROOT/portal/app/." "$WORK/site/app/"
   cp -r "$ROOT/portal/public/." "$WORK/site/public/"
-  printf '<?php define("OFFLINE_PREFIX", "%s"); require "%s/lib/core.php";\n' "$A" "$ROOT" >"$WORK/prepend.php"
+  # The pages look at a session only on the encrypted site, which the web server marks with HTTPS=on.
+  printf '<?php define("OFFLINE_PREFIX", "%s"); require "%s/lib/core.php"; $_SERVER["HTTPS"] = "on";\n' "$A" "$ROOT" >"$WORK/prepend.php"
+  ADULT="$(printf 'C%.0s' {1..43})"
+  echo "$ADULT adult:peter:$(($(date +%s) + 3600))" >"$A/run/offline-auth/sessions.map"
+  # Every check written before there were accounts looks at the portal as a signed-in adult: curl sends
+  # the session with each request. The checks of what a child sees use "curl -q", which sends nothing.
+  mkdir -p "$WORK/curlhome"
+  printf 'header = "Cookie: __Host-offline-session=%s"\n' "$ADULT" >"$WORK/curlhome/.curlrc"
+  export CURL_HOME="$WORK/curlhome"
+  mkdir -p "$A/srv/offline/media/children/Cartoons"
+  head -c 1500 /dev/urandom >"$A/srv/offline/media/children/Cartoons/Small film.mp4"
+  ln -s ../movies "$A/srv/offline/media/children/way-out"
   DISABLED="$(sed -n 's/^php_admin_value\[disable_functions\] = //p' "$ROOT/config/php-fpm-offline-portal.conf")"
   WEB=$((40000 + RANDOM % 20000))
   php -d auto_prepend_file="$WORK/prepend.php" -d disable_functions="$DISABLED" -d allow_url_fopen=0 \
@@ -914,6 +1127,49 @@ if have curl; then
   refute "generated sign-ins never reach a page" bash -c "curl -s 'http://127.0.0.1:$WEB/apps.php' | grep -q \"\$(cat '$A/etc/offline/apps/flatnotes.login')\""
   check "pages carry a Content-Security-Policy" bash -c "curl -sI 'http://127.0.0.1:$WEB/' | grep -qi \"content-security-policy: default-src 'none'\""
   refute "the house key never reaches a page" grep -rq "$KEY" "$WORK/body.html" "$A/run/offline/status.json"
+
+  echo
+  echo "What a child sees"
+  kid() { curl -q -s -o "$WORK/kid.html" -w '%{http_code} %{redirect_url}' "$@"; }
+  check "without signing in, the front page is the children's" bash -c "curl -q -s 'http://127.0.0.1:$WEB/' | grep -q 'What would you like to do?' && curl -q -s 'http://127.0.0.1:$WEB/' | grep -q '<body class=\"kids\">'"
+  check "signed in, it is the overview" bash -c "curl -s 'http://127.0.0.1:$WEB/' | grep -q '<body class=\"grown-up\">'"
+  refute "the children's pages do not list the adults' pages" bash -c "curl -q -s 'http://127.0.0.1:$WEB/' | grep -Eq 'href=\"/(library|apps|radio|peers|guide|remedies)\.php'"
+  for page in library.php apps.php radio.php peers.php guide.php remedies.php "media.php?p=movies" "media.php?p=movies/Trips" "play.php?f=movies/holiday.mp4" \
+    "media.php?p=children/way-out" "play.php?f=children/../movies/holiday.mp4"; do
+    if [[ "$(kid "http://127.0.0.1:$WEB/$page")" == "302 https://127.0.0.1/account/signin.php"* || "$(kid "http://127.0.0.1:$WEB/$page")" == 404* ]] && ! grep -q 'Gower\|<video\|files/media/movies' "$WORK/kid.html"; then
+      pass "/$page is closed to anyone not signed in"
+    else
+      fail "/$page is closed to anyone not signed in"
+    fi
+  done
+  check "a made-up session is nobody" bash -c "curl -q -s -H 'Cookie: __Host-offline-session=$(printf 'D%.0s' {1..43})' 'http://127.0.0.1:$WEB/library.php' -o /dev/null -w '%{http_code}' | grep -qx 302"
+  check "a session that has run out is nobody" bash -c "echo '$(printf 'E%.0s' {1..43}) adult:peter:1000000000' >>'$A/run/offline-auth/sessions.map'; curl -q -s -H 'Cookie: __Host-offline-session=$(printf 'E%.0s' {1..43})' 'http://127.0.0.1:$WEB/library.php' -o /dev/null -w '%{http_code}' | grep -qx 302"
+  check "the way back after signing in is kept, and only within the portal" bash -c "curl -q -s -o /dev/null -w '%{redirect_url}' 'http://127.0.0.1:$WEB/library.php' | grep -q 'signin.php?next=%2Flibrary.php'"
+  check "children see their own films" bash -c "curl -q -s 'http://127.0.0.1:$WEB/media.php' | grep -q 'Cartoons' && curl -q -s 'http://127.0.0.1:$WEB/media.php?p=children/Cartoons' | grep -q 'Small film.mp4'"
+  refute "children do not see the other folders" bash -c "curl -q -s 'http://127.0.0.1:$WEB/media.php' | grep -q -e movies -e Trips -e 'srv/offline'"
+  check "a children's film can be played" bash -c "curl -q -s 'http://127.0.0.1:$WEB/play.php?f=children/Cartoons/Small%20film.mp4' | grep -q '<video'"
+  check "the children's shelf page opens without signing in" bash -c "[[ \$(curl -q -s -o /dev/null -w '%{http_code}' 'http://127.0.0.1:$WEB/read.php') == 200 ]]"
+  check "games, maps and broadcasts stay open to children" bash -c "for page in games.php maps.php alerts.php 'places.php?q=x'; do [[ \$(curl -q -s -o /dev/null -w '%{http_code}' \"http://127.0.0.1:$WEB/\$page\") == 200 ]] || exit 1; done"
+  check "on the plain site a session is not even looked at" bash -c "printf '<?php define(\"OFFLINE_PREFIX\", \"%s\"); require \"%s/lib/core.php\";\n' '$A' '$ROOT' >'$WORK/prepend-plain.php'; php -d auto_prepend_file='$WORK/prepend-plain.php' -r '\$_COOKIE[\"__Host-offline-session\"] = \$argv[1]; \$_SERVER[\"REQUEST_METHOD\"] = \"GET\"; \$_SERVER[\"SCRIPT_NAME\"] = \"/index.php\"; require \$argv[2] . \"/portal/app/bootstrap.php\"; exit(portal_is_adult() ? 1 : 0);' '$ADULT' '$ROOT' >/dev/null 2>&1"
+
+  # The sign-in pages, under the restrictions of their own pool.
+  AUTH_DISABLED="$(sed -n 's/^php_admin_value\[disable_functions\] = //p' "$ROOT/config/php-fpm-offline-auth.conf")"
+  printf '<?php define("OFFLINE_PREFIX", "%s"); require "%s/lib/core.php"; require "%s/lib/auth.php"; $_SERVER["HTTPS"] = "on";\n' "$A" "$ROOT" "$ROOT" >"$WORK/prepend-auth.php"
+  SIGN=$((WEB + 1))
+  php -d auto_prepend_file="$WORK/prepend-auth.php" -d disable_functions="$AUTH_DISABLED" -d allow_url_fopen=0 \
+    -d open_basedir="$WORK/:$ROOT/lib/:$ROOT/config/" -d display_errors=1 -d error_reporting=-1 \
+    -S "127.0.0.1:$SIGN" -t "$WORK/site/public" >"$WORK/php-auth.log" 2>&1 &
+  PIDS+=("$!")
+  sleep 1
+  check "the sign-in page renders" bash -c "curl -q -s 'http://127.0.0.1:$SIGN/account/signin.php' | grep -q 'name=\"password\" type=\"password\"' && ! curl -q -s 'http://127.0.0.1:$SIGN/account/signin.php' | grep -Eq 'Warning|Notice|Fatal error|Deprecated'"
+  check "a wrong password is refused without saying which part was wrong" bash -c "curl -q -s -d 'name=peter&password=not-the-password' 'http://127.0.0.1:$SIGN/account/signin.php' | grep -q 'do not match an adult'"
+  check "the right password sets a session cookie that scripts and other sites cannot use" bash -c "curl -q -s -D '$WORK/signin.headers' -o /dev/null -d 'name=peter&password=a different long password&next=/library.php' 'http://127.0.0.1:$SIGN/account/signin.php'; grep -Eiq '^Set-Cookie: __Host-offline-session=[A-Za-z0-9_-]{43}; Path=/; Max-Age=43200; Secure; HttpOnly; SameSite=Strict' '$WORK/signin.headers' && grep -iq '^Location: /library.php' '$WORK/signin.headers'"
+  check "signing in cannot be used to send someone to another site" bash -c "curl -q -s -D - -o /dev/null -d 'name=peter&password=a different long password&next=//evil.example/' 'http://127.0.0.1:$SIGN/account/signin.php' | grep -iq '^Location: /\s*$'"
+  check "a sign-in form sent from another site is refused" bash -c "[[ \$(curl -q -s -o /dev/null -w '%{http_code}' -H 'Origin: https://evil.example' -d 'name=peter&password=a different long password' 'http://127.0.0.1:$SIGN/account/signin.php') == 403 ]]"
+  NEW="$(sed -n 's/^Set-Cookie: __Host-offline-session=\([A-Za-z0-9_-]\{43\}\);.*/\1/Ip' "$WORK/signin.headers" | head -n 1)"
+  check "signing out needs the form, not just a visit" bash -c "[[ \$(curl -q -s -o /dev/null -w '%{http_code}' -H 'Cookie: __Host-offline-session=$NEW' -d 'proof=guess' 'http://127.0.0.1:$SIGN/account/signout.php') == 403 ]] && grep -q '^$NEW ' '$A/run/offline-auth/sessions.map'"
+  check "signing out ends the session" bash -c "proof=\$(curl -q -s -H 'Cookie: __Host-offline-session=$NEW' 'http://127.0.0.1:$SIGN/account/signout.php' | sed -n 's/.*name=\"proof\" value=\"\([0-9a-f]\{64\}\)\".*/\1/p'); curl -q -s -o /dev/null -H 'Cookie: __Host-offline-session=$NEW' -d \"proof=\$proof\" 'http://127.0.0.1:$SIGN/account/signout.php'; ! grep -q '^$NEW ' '$A/run/offline-auth/sessions.map'"
+  refute "no PHP error was logged by the sign-in pages" grep -Eq 'Warning|Notice|Fatal|Deprecated' "$WORK/php-auth.log"
 else
   note "curl not installed: portal checks not run"
 fi

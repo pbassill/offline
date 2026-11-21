@@ -1,0 +1,60 @@
+#!/usr/sbin/nft -f
+# Offline children's guard.
+#
+# A child's login account has the group offline-child as its only group, and
+# every connection it opens carries that group. Such a connection may go to:
+#   - this system: the portal (80, 443), the children's shelf (8080), the
+#     tablet activities (8600), the two applications open to children (Kolibri on
+#     8310 and 8311, Excalidraw on 8440), name lookups, and games that talk to
+#     themselves;
+#   - the home network: the same on another system, the family worlds
+#     (30000, 30001) and a kart race on the home network (2757 to 2759).
+# Everything else is refused at once: the internet, and every service this
+# system or the home network keeps for adults (the full library on 8090 and
+# 8443, the applications, the local AI, the sharing ports).
+#
+# The table is this project's own; the rest of the firewall is not touched.
+# Loaded by offline-children-guard.service.
+
+table inet offline_children
+delete table inet offline_children
+
+table inet offline_children {
+    set home4 {
+        type ipv4_addr
+        flags interval
+        elements = { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16 }
+    }
+
+    set home6 {
+        type ipv6_addr
+        flags interval
+        elements = { fc00::/7, fe80::/10 }
+    }
+
+    chain output {
+        type filter hook output priority filter; policy accept;
+        meta skgid "offline-child" jump children
+    }
+
+    chain children {
+        # Answers on connections already allowed.
+        ct state established,related accept
+
+        # This system.
+        oifname "lo" meta l4proto udp accept
+        oifname "lo" tcp dport { 53, 80, 443, 8080, 8310, 8311, 8440, 8600 } accept
+
+        # The home network.
+        ip daddr @home4 tcp dport { 80, 443, 8080, 8310, 8311, 8440, 8600 } accept
+        ip6 daddr @home6 tcp dport { 80, 443, 8080, 8310, 8311, 8440, 8600 } accept
+        ip daddr @home4 udp dport { 53, 123, 5353, 30000, 30001, 2757-2759 } accept
+        ip6 daddr @home6 udp dport { 53, 123, 5353, 30000, 30001, 2757-2759 } accept
+        ip daddr 224.0.0.251 udp dport 5353 accept
+        ip6 daddr ff02::fb udp dport 5353 accept
+        ip daddr @home4 icmp type echo-request accept
+        ip6 daddr @home6 icmpv6 type echo-request accept
+
+        counter reject with icmpx type admin-prohibited
+    }
+}
