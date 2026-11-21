@@ -11,7 +11,7 @@ declare(strict_types=1);
 
 namespace Offline;
 
-const VERSION = '2.4.0';
+const VERSION = '2.5.0';
 /** The sharing daemon itself, on 127.0.0.1 only. */
 const SYNC_PORT = 47001;
 /** What other systems connect to: the same daemon behind TLS keyed from the house key. */
@@ -61,6 +61,16 @@ const DEFAULTS = [
     'VAULT_SYNC' => 'yes',
     'VAULT_IDLE_MINUTES' => '30',
     'ACCOUNT_LOGINS' => 'auto',
+    'MESH_LORA_FREQUENCY' => '867200000',
+    'MESH_LORA_BANDWIDTH' => '125000',
+    'MESH_LORA_TXPOWER' => '14',
+    'MESH_LORA_SPREADING' => '8',
+    'MESH_LORA_CODINGRATE' => '5',
+    'MESH_LORA_AIRTIME_PERCENT' => '1',
+    'MESH_RNODE_PORTS' => '',
+    'MESH_PACKET' => 'no',
+    'MESH_PACKET_PORT' => '',
+    'MESH_PACKET_SPEED' => '1200',
     'AUTO_PRUNE' => 'yes',
     'DOWNLOAD_CONNECTIONS' => '4',
     'DOWNLOAD_MIN_FREE_GB' => '5',

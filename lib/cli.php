@@ -24,6 +24,7 @@ require_once __DIR__ . '/vault.php';
 require_once __DIR__ . '/rebuild.php';
 require_once __DIR__ . '/auth.php';
 require_once __DIR__ . '/users.php';
+require_once __DIR__ . '/net.php';
 
 // ---------------------------------------------------------------------------
 // Output
@@ -513,6 +514,7 @@ function collect_status(): array
         'hotspot' => ['set_up' => is_file(hotspot_profile_file()), 'on' => hotspot_active()],
         'time_server' => time_serving(),
         'people' => people_status(),
+        'net' => net_status(),
         'tls' => tls_status(),
         'vault' => vault_status(),
         'rebuild' => rebuild_status(),
@@ -750,6 +752,16 @@ function command_doctor(array $args): int
         $open = ((int) @fileperms(path('vault')) & 0007) !== 0;
         $add('Family vault', $open ? 'fail' : 'ok', $open ? 'its folder is open to every local account' : plural($status['vault']['files'], 'encrypted file') . ', closed to other accounts',
             'sudo chmod 2770 ' . path('vault'));
+    }
+    $net = $status['net'];
+    if ($net['joined'] && prefix() === '') {
+        $add('Private network', $net['up'] ? 'ok' : 'fail', $net['up'] ? "tunnel up as {$net['address']}, " . plural(count($net['peers']), 'other system') . ' known' : 'joined, but the tunnel is down',
+            'sudo systemctl restart wg-quick@' . NET_INTERFACE);
+    }
+    if ($net['mesh']['enabled'] && prefix() === '') {
+        $add('Radio layer', $net['mesh']['state'] === 'active' ? 'ok' : 'warn', $net['mesh']['state'] === 'active'
+            ? ($net['mesh']['radios'] === [] ? 'running over the home network and the tunnels; no LoRa radio plugged in' : 'running, with ' . plural(count($net['mesh']['radios']), 'LoRa radio'))
+            : "switched on but {$net['mesh']['state']}", 'sudo systemctl restart ' . MESH_UNIT);
     }
     $people = $status['people'];
     if ($people['children_here'] > 0) {
@@ -1396,6 +1408,15 @@ function discover_peers(bool $verbose): array
     foreach (servers() as $server) {
         $peers[peer_key($server['host'], $server['port'])] = ['address' => $server['host'], 'port' => $server['port'], 'name' => $server['host'], 'method' => 'server'];
     }
+    // Servers on the household's private network are pulled from wherever this system happens to be, once its tunnel is up.
+    if (net_active()) {
+        $identity = net_identity();
+        foreach (net_nodes() as $key => $node) {
+            if (!$node['removed'] && $node['role'] === 'server' && ($identity === null || $key !== $identity['public'])) {
+                $peers[peer_key($node['address'], TLS_PORT)] = ['address' => $node['address'], 'port' => TLS_PORT, 'name' => $node['name'], 'method' => 'private network'];
+            }
+        }
+    }
     if (prefix() !== '') {
         foreach (array_filter(explode(',', (string) getenv('OFFLINE_TEST_PEERS'))) as $spec) {
             [$ip, $port] = explode(':', $spec) + [1 => (string) TLS_PORT];
@@ -1777,6 +1798,12 @@ function command_sync(array $args): int
 
     foreach ($found as $ip => $peer) {
         $result = ['auth' => 'error', 'error' => '', 'files' => 0, 'bytes' => 0, 'offers' => []];
+        if ($modules === []) {
+            // A system that holds no content, a repeater for one, still exchanges accounts and the list of systems.
+            $probe = remote_listing($peer, 'media');
+            $result['auth'] = $probe['ok'] ? 'ok' : $probe['auth'];
+            $result['error'] = $probe['ok'] ? '' : $probe['error'];
+        }
         foreach ($modules as $module) {
             $listing = remote_listing($peer, $module);
             if (!$listing['ok']) {
@@ -1818,6 +1845,10 @@ function command_sync(array $args): int
             if ($changed !== []) {
                 out("  $ip/accounts: " . plural(count($changed), 'account') . ' updated (' . implode(', ', $changed) . ')');
                 $accountsChanged = true;
+            }
+            $systems = net_pull($peer);
+            if ($systems !== []) {
+                out("  $ip/network: " . plural(count($systems), 'system') . ' updated (' . implode(', ', array_unique($systems)) . ')');
             }
         }
         if ($result['auth'] === 'ok' && $result['offers'] !== [] && count($result['offers']) === count($modules)) {
@@ -2106,6 +2137,11 @@ function usage(): void
     out('  offline stage                        what has been downloaded and awaits release');
     out('  offline stage publish ID|all [--to FOLDER] | discard ID');
     out();
+    out('Private network (run with sudo, except the report)');
+    out('  offline net                          this system\'s place on the household\'s private network');
+    out('  offline net join | endpoint HOST:PORT|none | forget NAME | leave');
+    out('  offline net radio on|off             carry family broadcasts over LoRa and the other links');
+    out();
     out('People (run with sudo, except the list)');
     out('  offline user                         the household\'s accounts');
     out('  offline user add NAME --adult|--child [--full "Full name"] [--admin] [--portal-only]');
@@ -2148,6 +2184,10 @@ function main(array $argv): int
     $keepsRoot = ['key', 'power', 'vault', 'help', '--help', '-h', 'version', '--version', '-V'];
     // Accounts belong to the system; so does its certificate. The session clean-up runs as the sign-in account.
     if (in_array($command, ['user', 'users', 'tls'], true)) {
+        $keepsRoot[] = $command;
+    }
+    // The tunnel and its keys belong to the system; the report on them does not need root.
+    if (in_array($command, ['net', 'network'], true) && ($args[0] ?? 'status') !== 'status') {
         $keepsRoot[] = $command;
     }
     // Managing applications needs root; merely listing them does not.
@@ -2203,6 +2243,7 @@ function main(array $argv): int
         'vault' => command_vault($args),
         'user', 'users' => command_user($args),
         'tls' => command_tls($args),
+        'net', 'network' => command_net($args),
         'rebuild' => command_rebuild($args),
         'export' => command_export($args),
         'import' => command_import($args),

@@ -1,0 +1,54 @@
+# The radio layer of the private network: Reticulum over whatever links this
+# system has, carrying family broadcasts. One process, as the unprivileged
+# sharing account; it can write only where broadcasts are kept and received.
+[Unit]
+Description=Offline private network, radio layer (Reticulum)
+Documentation=https://github.com/pbassill/offline
+After=network.target wg-quick@offline0.service
+ConditionPathExists=/var/lib/offline/reticulum/config
+ConditionPathExists=/opt/offline/rns/bin/python3
+
+[Service]
+Type=simple
+User=offline
+Group=offline
+SupplementaryGroups=dialout
+ExecStart=/opt/offline/rns/bin/python3 /usr/local/lib/offline/offline-mesh-bridge --config /var/lib/offline/reticulum --key /etc/offline/house.key --broadcasts /var/lib/offline/broadcasts --inbox /var/lib/offline/inbox
+Restart=on-failure
+RestartSec=15
+ReadWritePaths=/var/lib/offline/reticulum /var/lib/offline/inbox
+
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+# A LoRa radio or a packet modem is a serial device.
+PrivateDevices=no
+DevicePolicy=closed
+DeviceAllow=char-ttyACM rw
+DeviceAllow=char-ttyUSB rw
+DeviceAllow=char-ttyS rw
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+UMask=0027
+IPAddressDeny=any
+IPAddressAllow=localhost 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 169.254.0.0/16 fe80::/10 ff00::/8
+
+[Install]
+WantedBy=multi-user.target
