@@ -3,9 +3,11 @@
 # Offline installer for Ubuntu.
 #
 # Turns a laptop into a self-contained offline library: reference works, media,
-# a local AI model, a web portal, and automatic exchange of content with other
-# Offline laptops in the house. Safe to run again at any time; a second run
-# upgrades the tools and leaves content, settings and the house key alone.
+# maps, a local AI model, a web portal, family broadcasts, and automatic exchange
+# of content with the household's other systems. With --role server it sets up a
+# central server instead: the same sharing, a download queue and a staging area,
+# and no desktop. Safe to run again at any time; a second run upgrades the tools
+# and leaves content, settings and the house key alone.
 #
 #   sudo ./install.sh --help
 
@@ -13,7 +15,7 @@ set -Eeuo pipefail
 IFS=$'\n\t'
 umask 022
 
-readonly OFFLINE_VERSION="2.1.0"
+readonly OFFLINE_VERSION="2.2.0"
 readonly SHARE_ROOT="/srv/offline"
 readonly STATE_DIR="/var/lib/offline"
 readonly CONF_DIR="/etc/offline"
@@ -38,17 +40,21 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly SCRIPT_DIR
 
 OPT_UPGRADE=yes
-OPT_AI=yes
-OPT_MSTY=yes
-OPT_JDOWNLOADER=yes
+# Empty means "decide by role": a workstation gets these, a server does not.
+OPT_AI=""
+OPT_MSTY=""
+OPT_JDOWNLOADER=""
+OPT_APPS=""
+OPT_RADIO=""
 OPT_DRY_RUN=no
 OPT_SCOPE=""
 OPT_KEY=""
 OPT_PACKS=""
 OPT_MODELS=""
-OPT_APPS="all"
 OPT_MAPS=""
-OPT_RADIO=yes
+OPT_ROLE=""
+OPT_EXPOSE=""
+OPT_SERVERS=()
 
 STEPS_OK=()
 STEPS_FAILED=()
@@ -60,16 +66,26 @@ Offline installer $OFFLINE_VERSION
 
 Usage: sudo ./install.sh [options]
 
+  --role ROLE          workstation (default): a laptop or desktop people sit at
+                       server: a central system that downloads, stages and
+                       serves content to the others; no desktop applications
+  --server HOST[:PORT] pull from this central server; repeat for several, for
+                       example one at home and one in a datacentre
+  --expose internet    on a server, accept other systems from any address rather
+                       than private ones only; they must still hold the house key
   --packs "A B"        download these content packs at the end (see: offline catalogue)
   --maps "A B"         download these map regions at the end (see: offline maps)
-  --apps "A B"         applications to install: names, "all" (default: the whole
-                       Project NOMAD set) or "none" (see: offline apps)
+  --apps "A B"         applications to install: names, "all" (the whole Project
+                       NOMAD set; default on a workstation) or "none" (default
+                       on a server) (see: offline apps)
   --no-radio           skip the radio tools (SDR, Meshtastic, handset programming)
+  --with-radio         install the radio tools on a server
+  --with-ai            install Ollama on a server
   --key KEY            join an existing household by entering its house key
                        (or leave it out and run "sudo offline key set" afterwards,
                        which keeps the key off the command line)
   --models "A B"       Ollama models to pull (default: from offline.conf, qwen2.5:0.5b)
-  --local-only         portal, reader and media reachable from this laptop only
+  --local-only         portal, reader and media reachable from this system only
   --lan                portal, reader and media reachable from the home network (default)
   --no-upgrade         do not upgrade already-installed packages
   --no-ai              skip Ollama and Msty Studio
@@ -168,12 +184,29 @@ conf_get() {
   printf '%s' "$value"
 }
 
+# Set one KEY=value line in offline.conf, replacing it if present. Values are
+# checked by the caller; nothing here is ever executed.
+conf_set() {
+  local key="$1" value="$2" file="$CONF_DIR/offline.conf"
+  if grep -q "^${key}=" "$file"; then
+    sed -i "s|^${key}=.*|${key}=\"${value}\"|" "$file"
+  else
+    printf '\n%s="%s"\n' "$key" "$value" >>"$file"
+  fi
+}
+
 # --------------------------------------------------------------------------
 # Steps
 # --------------------------------------------------------------------------
 
 apt_install() {
   apt-get install -y --no-install-recommends "$@"
+}
+
+install_alert_helpers() {
+  apt_install zenity libnotify-bin
+  # The alert sound is a nicety, and its package is not in every release.
+  apt-get install -y --no-install-recommends gnome-session-canberra || echo "No alert sound: gnome-session-canberra is not available."
 }
 
 create_accounts() {
@@ -195,6 +228,14 @@ create_directories() {
     maps radio radio/firmware; do
     install -d -m 2775 -o offline -g offline "$SHARE_ROOT/$dir"
   done
+  # Downloads wait here until published. Not shared, and closed to other accounts.
+  install -d -m 2770 -o offline -g offline "$SHARE_ROOT/staging"
+  # Family broadcasts: signed ones kept and offered to other systems, those pushed
+  # here by other systems, and requests from people on this machine. Members of
+  # the offline group may drop a request in the outbox but not list or remove
+  # one another's.
+  install -d -m 0750 -o offline -g offline "$STATE_DIR/broadcasts" "$STATE_DIR/inbox"
+  install -d -m 3730 -o offline -g offline "$STATE_DIR/outbox"
   # Application data belongs to the applications' own user ranges, not to the sharing account.
   install -d -m 0755 -o root -g root "$SHARE_ROOT/apps"
   install -d -m 0700 -o root -g root "$CONF_DIR/apps"
@@ -236,7 +277,12 @@ migrate_layout() {
 
 install_tools() {
   install -m 0755 -o root -g root "$SCRIPT_DIR/bin/offline" /usr/local/bin/offline
-  install -m 0644 -o root -g root "$SCRIPT_DIR"/lib/*.php "$SCRIPT_DIR/config/catalogue.tsv" "$SCRIPT_DIR/config/maps.tsv" "$LIB_DIR/"
+  install -m 0644 -o root -g root "$SCRIPT_DIR"/lib/*.php "$SCRIPT_DIR/config/catalogue.tsv" "$SCRIPT_DIR/config/maps.tsv" \
+    "$SCRIPT_DIR/config/sites.tsv" "$LIB_DIR/"
+  # The desktop alert and the dialog that sends a family broadcast.
+  install -d -m 0755 -o root -g root "$LIB_DIR/desktop"
+  install -m 0755 -o root -g root "$SCRIPT_DIR/desktop/offline-alert-agent" "$SCRIPT_DIR/desktop/offline-broadcast-send" "$LIB_DIR/desktop/"
+  install -m 0644 -o root -g root "$SCRIPT_DIR/config/stunnel.conf" "$CONF_DIR/stunnel.conf"
   # Application units, reference data and radio channel files.
   rsync --recursive --delete --chmod=D755,F644 --chown=root:root "$SCRIPT_DIR/apps/" "$LIB_DIR/apps/"
   rsync --recursive --delete --chmod=D755,F644 --chown=root:root "$SCRIPT_DIR/data/" "$LIB_DIR/data/"
@@ -248,10 +294,16 @@ install_tools() {
   else
     install -m 0644 -o root -g root "$SCRIPT_DIR/config/offline.conf" "$CONF_DIR/offline.conf.dist"
   fi
-  if grep -q '^PORTAL_SCOPE=' "$CONF_DIR/offline.conf"; then
-    sed -i "s/^PORTAL_SCOPE=.*/PORTAL_SCOPE=$SCOPE/" "$CONF_DIR/offline.conf"
-  else
-    printf '\nPORTAL_SCOPE=%s\n' "$SCOPE" >>"$CONF_DIR/offline.conf"
+  conf_set PORTAL_SCOPE "$SCOPE"
+  conf_set ROLE "$ROLE"
+  conf_set SYNC_EXPOSE "$EXPOSE"
+  if [[ "$EXPOSE" == internet ]]; then
+    # A system in a datacentre must not go looking through its neighbours' addresses.
+    conf_set SYNC_SCAN_FALLBACK no
+  fi
+  if [[ ! -e "$CONF_DIR/sites.local.tsv" ]]; then
+    printf '# Your own websites to archive. Columns separated by single tabs:\n# id\tgroup\taddress\tZIM name\ttitle\tpage limit\tnote\n' >"$CONF_DIR/sites.local.tsv"
+    chmod 0644 "$CONF_DIR/sites.local.tsv"
   fi
   if [[ ! -e "$CONF_DIR/maps.local.tsv" ]]; then
     printf '# Your own map regions. Columns separated by single tabs:\n# id\tgroup\tname\tbbox\twest,south,east,north\n' >"$CONF_DIR/maps.local.tsv"
@@ -285,7 +337,27 @@ EOF
   else
     rm -f /etc/systemd/system/offline-reader.service.d/scope.conf
   fi
+  # The encrypted listener answers private addresses only, unless this is a
+  # server meant to be reached from elsewhere. The house key is required either way.
+  install -d -m 0755 /etc/systemd/system/offline-tls.service.d
+  if [[ "$EXPOSE" == internet ]]; then
+    cat >/etc/systemd/system/offline-tls.service.d/expose.conf <<'EOF'
+# Written by the Offline installer: SYNC_EXPOSE=internet.
+[Service]
+IPAddressAllow=
+IPAddressAllow=any
+EOF
+  else
+    rm -f /etc/systemd/system/offline-tls.service.d/expose.conf
+  fi
   systemctl daemon-reload
+}
+
+name_servers() {
+  local server
+  for server in "$@"; do
+    /usr/local/bin/offline server add "$server"
+  done
 }
 
 set_house_key() {
@@ -295,8 +367,11 @@ set_house_key() {
     printf '%s\n' "$OFFLINE_INSTALL_KEY" | /usr/local/bin/offline key set - >/dev/null
   elif [[ ! -s "$CONF_DIR/house.key" ]]; then
     /usr/local/bin/offline key new >/dev/null
+  else
+    # An existing key from an earlier version has no transport key beside it yet.
+    /usr/local/bin/offline key refresh >/dev/null
   fi
-  [[ -s "$CONF_DIR/house.key" && -s "$CONF_DIR/rsyncd.secrets" ]]
+  [[ -s "$CONF_DIR/house.key" && -s "$CONF_DIR/rsyncd.secrets" && -s "$CONF_DIR/sync.psk" ]]
 }
 
 configure_firewall() {
@@ -305,8 +380,23 @@ configure_firewall() {
   ufw default allow outgoing
   # Rule left by earlier versions: the reader port open to every address.
   ufw delete allow 8080/tcp >/dev/null 2>&1 || true
+  # Earlier versions shared over port 47001 unencrypted. That port now answers
+  # this machine only; the encrypted port in front of it is 47002.
   for net in "${LAN_NETS[@]}"; do
-    ufw allow from "$net" to any port 47001 proto tcp comment 'Offline content sharing'
+    ufw delete allow from "$net" to any port 47001 proto tcp >/dev/null 2>&1 || true
+  done
+  if [[ "$EXPOSE" == internet ]]; then
+    for net in "${LAN_NETS[@]}"; do
+      ufw delete allow from "$net" to any port 47002 proto tcp >/dev/null 2>&1 || true
+    done
+    ufw allow 47002/tcp comment 'Offline sharing, encrypted and keyed'
+  else
+    ufw delete allow 47002/tcp >/dev/null 2>&1 || true
+  fi
+  for net in "${LAN_NETS[@]}"; do
+    if [[ "$EXPOSE" != internet ]]; then
+      ufw allow from "$net" to any port 47002 proto tcp comment 'Offline sharing, encrypted and keyed'
+    fi
     if [[ "$SCOPE" == lan ]]; then
       ufw allow from "$net" to any port 80 proto tcp comment 'Offline portal'
       ufw allow from "$net" to any port 8080 proto tcp comment 'Offline library reader'
@@ -315,13 +405,21 @@ configure_firewall() {
       ufw delete allow from "$net" to any port 8080 proto tcp >/dev/null 2>&1 || true
     fi
   done
-  # Do not lock out an administrator who manages this laptop over SSH.
+  # Do not lock out an administrator who manages this system over SSH. A server
+  # exposed to the internet is administered from the internet, so SSH stays
+  # reachable there, rate-limited; everywhere else it is the home network only.
   if systemctl is-active --quiet ssh 2>/dev/null || systemctl is-active --quiet ssh.socket 2>/dev/null; then
     ssh_port="$(sshd -T 2>/dev/null | awk '$1 == "port" { print $2; exit }')" || ssh_port=""
     [[ "$ssh_port" =~ ^[0-9]{1,5}$ ]] || ssh_port=22
-    for net in "${LAN_NETS[@]}"; do
-      ufw limit from "$net" to any port "$ssh_port" proto tcp comment 'SSH from the home network'
-    done
+    if [[ "$EXPOSE" == internet ]]; then
+      ufw limit "$ssh_port/tcp" comment 'SSH, rate-limited'
+    else
+      # A rule left from a time when this system was exposed to the internet.
+      ufw delete limit "$ssh_port/tcp" >/dev/null 2>&1 || true
+      for net in "${LAN_NETS[@]}"; do
+        ufw limit from "$net" to any port "$ssh_port" proto tcp comment 'SSH from the home network'
+      done
+    fi
   fi
   ufw logging low
   ufw --force enable
@@ -332,6 +430,11 @@ configure_discovery() {
   install -m 0644 -o root -g root "$SCRIPT_DIR/config/avahi-offline.service" /etc/avahi/services/offline.service
   systemctl enable --now avahi-daemon.service
   systemctl reload avahi-daemon.service || systemctl restart avahi-daemon.service
+}
+
+withdraw_discovery() {
+  rm -f /etc/avahi/services/offline.service
+  systemctl reload avahi-daemon.service 2>/dev/null || true
 }
 
 configure_webserver() {
@@ -369,9 +472,16 @@ configure_webserver() {
 start_services() {
   # The reader needs an index to start; build an empty one on first install.
   /usr/local/bin/offline library
-  systemctl enable offline-rsync.service offline-reader.service offline-peer-sync.timer offline-status.timer offline-library.path
-  systemctl restart offline-rsync.service offline-reader.service
-  systemctl restart offline-peer-sync.timer offline-status.timer offline-library.path
+  systemctl enable offline-rsync.service offline-tls.service offline-reader.service offline-peer-sync.timer offline-status.timer \
+    offline-library.path offline-broadcast.path offline-broadcast-poll.timer
+  systemctl restart offline-rsync.service offline-tls.service offline-reader.service
+  systemctl restart offline-peer-sync.timer offline-status.timer offline-library.path offline-broadcast.path offline-broadcast-poll.timer
+  # Only a server works through a download queue unattended.
+  if [[ "$ROLE" == server ]]; then
+    systemctl enable --now offline-queue.timer offline-archive.timer
+  else
+    systemctl disable --now offline-queue.timer offline-archive.timer >/dev/null 2>&1 || true
+  fi
   systemctl start offline-status.service
 }
 
@@ -504,7 +614,7 @@ desktop_shortcuts() {
 [Desktop Entry]
 Type=Application
 Name=Offline Portal
-Comment=Library, media and status of this laptop, with no internet
+Comment=Library, media and status of this system, with no internet
 Exec=xdg-open http://localhost/
 Icon=accessories-dictionary
 Terminal=false
@@ -515,11 +625,18 @@ EOF
   launcher="$desktop/offline-portal.desktop"
   install -m 0755 -o "$TARGET_USER" -g "$TARGET_USER" /usr/share/applications/offline-portal.desktop "$launcher"
   sudo -u "$TARGET_USER" -H gio set "$launcher" metadata::trusted true 2>/dev/null || true
+  # Family broadcast: a launcher to send one, and the agent that shows them at login.
+  install -m 0644 -o root -g root "$SCRIPT_DIR/desktop/offline-broadcast.desktop" /usr/share/applications/offline-broadcast.desktop
+  install -d -m 0755 /etc/xdg/autostart
+  install -m 0644 -o root -g root "$SCRIPT_DIR/desktop/offline-alert.desktop" /etc/xdg/autostart/offline-alert.desktop
+  launcher="$desktop/offline-broadcast.desktop"
+  install -m 0755 -o "$TARGET_USER" -g "$TARGET_USER" /usr/share/applications/offline-broadcast.desktop "$launcher"
+  sudo -u "$TARGET_USER" -H gio set "$launcher" metadata::trusted true 2>/dev/null || true
   rm -f -- "$desktop/Msty.desktop"
   cat >"$desktop/Quick Links.txt" <<'EOF'
 OFFLINE: QUICK LINKS
 
-Everything on this laptop:        http://localhost/
+Everything on this system:        http://localhost/
 Library reader:                   http://localhost:8080/
 Full guide:                       http://localhost/guide.php
 
@@ -531,7 +648,8 @@ In a terminal:
   offline maps                    map regions; view them at http://localhost/maps.php
   offline apps                    browser applications; see http://localhost/apps.php
   offline radio                   receivers and mesh nodes; see http://localhost/radio.php
-  sudo offline key show           the house key to enter on the other laptops
+  offline broadcast "TEXT"        alert every screen and the mesh radios
+  sudo offline key show           the house key to enter on the other systems
 
 Library titles live in Documents/Kiwix-zims. Drop .zim files there and the
 reader picks them up. Films, music and books live in /srv/offline/media.
@@ -551,7 +669,7 @@ EOF
 
 if [[ "${1:-}" == "--internal-step" ]]; then
   shift
-  : "${TARGET_USER:?}" "${TARGET_HOME:?}" "${SCOPE:?}" "${ARCH:?}"
+  : "${TARGET_USER:?}" "${TARGET_HOME:?}" "${SCOPE:?}" "${ARCH:?}" "${ROLE:?}" "${EXPOSE:?}"
   trap 'echo "step stopped at line $LINENO: $BASH_COMMAND" >&2' ERR
   "$@"
   exit 0
@@ -570,6 +688,11 @@ while (($# > 0)); do
     --apps) OPT_APPS="${2:?--apps needs a value}"; shift 2 ;;
     --no-apps) OPT_APPS=none; shift ;;
     --no-radio) OPT_RADIO=no; shift ;;
+    --with-radio) OPT_RADIO=yes; shift ;;
+    --with-ai) OPT_AI=yes; shift ;;
+    --role) OPT_ROLE="${2:?--role needs a value}"; shift 2 ;;
+    --server) OPT_SERVERS+=("${2:?--server needs a value}"); shift 2 ;;
+    --expose) OPT_EXPOSE="${2:?--expose needs a value}"; shift 2 ;;
     --local-only) OPT_SCOPE=local; shift ;;
     --lan) OPT_SCOPE=lan; shift ;;
     --no-upgrade) OPT_UPGRADE=no; shift ;;
@@ -597,7 +720,10 @@ TARGET_HOME="$(getent passwd "$TARGET_USER" | cut -d: -f6)"
 readonly TARGET_HOME
 [[ -n "$TARGET_HOME" && -d "$TARGET_HOME" ]] || { echo "Could not determine the home directory for $TARGET_USER" >&2; exit 1; }
 
-for required in bin/offline lib/core.php lib/cli.php lib/maps.php lib/apps.php lib/radio.php config/offline.conf config/catalogue.tsv config/maps.tsv config/rsyncd.conf apps/apps.tsv data/conditions.json portal/public/index.php systemd/offline-rsync.service; do
+for required in bin/offline lib/core.php lib/cli.php lib/maps.php lib/apps.php lib/radio.php lib/server.php lib/broadcast.php \
+  config/offline.conf config/catalogue.tsv config/maps.tsv config/sites.tsv config/rsyncd.conf config/stunnel.conf apps/apps.tsv \
+  data/conditions.json portal/public/index.php systemd/offline-rsync.service systemd/offline-tls.service \
+  systemd/offline-broadcast.service desktop/offline-alert-agent; do
   [[ -f "$SCRIPT_DIR/$required" ]] || { echo "Missing $required. Run the installer from a complete copy of the repository." >&2; exit 1; }
 done
 
@@ -636,10 +762,50 @@ say "  Network  $([[ "$ONLINE" == yes ]] && echo 'online' || echo 'offline: pack
 SCOPE="$OPT_SCOPE"
 [[ -n "$SCOPE" ]] || SCOPE="$(conf_get PORTAL_SCOPE)"
 [[ "$SCOPE" == local || "$SCOPE" == lan ]] || SCOPE=lan
-readonly SCOPE
-say "  Scope    $([[ "$SCOPE" == lan ]] && echo 'this laptop and the home network' || echo 'this laptop only')"
+# Role and exposure: the command line wins, then the existing setting, then the default.
+ROLE="$OPT_ROLE"
+[[ -n "$ROLE" ]] || ROLE="$(conf_get ROLE)"
+[[ -n "$ROLE" ]] || ROLE=workstation
+[[ "$ROLE" == workstation || "$ROLE" == server ]] || die "--role must be workstation or server, not \"$ROLE\"."
+EXPOSE="$OPT_EXPOSE"
+[[ -n "$EXPOSE" ]] || EXPOSE="$(conf_get SYNC_EXPOSE)"
+[[ -n "$EXPOSE" ]] || EXPOSE=lan
+[[ "$EXPOSE" == lan || "$EXPOSE" == internet ]] || die "--expose must be lan or internet, not \"$EXPOSE\"."
+if [[ "$EXPOSE" == internet && "$ROLE" != server ]]; then
+  die "--expose internet is for a central server. Add --role server, or leave --expose out."
+fi
+if [[ "$EXPOSE" == internet ]]; then
+  # Only the keyed, encrypted sharing port faces the internet. The portal, the
+  # reader and the media shares carry no sign-in and stay on the server itself.
+  if [[ "$OPT_SCOPE" == lan ]]; then
+    say "  ${C_YELLOW}note:${C_OFF} --lan is ignored with --expose internet; the portal stays on this system only."
+  fi
+  SCOPE=local
+fi
+readonly SCOPE ROLE EXPOSE
+for server in "${OPT_SERVERS[@]:-}"; do
+  [[ -z "$server" || "$server" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?(:[0-9]{2,5})?$ ]] ||
+    die "--server takes a host name or IPv4 address, optionally with a port; \"$server\" is neither."
+done
 
-export TARGET_USER TARGET_HOME SCOPE ARCH
+# What a workstation gets by default, a server gets only when asked.
+WHY_NO_RADIO="--no-radio"
+WHY_NO_AI="--no-ai"
+WHY_NO_APPS="--apps none"
+if [[ "$ROLE" == server ]]; then
+  [[ -n "$OPT_RADIO" ]] || WHY_NO_RADIO="a server gets them only with --with-radio"
+  [[ -n "$OPT_AI" ]] || WHY_NO_AI="a server gets them only with --with-ai"
+  [[ -n "$OPT_APPS" ]] || WHY_NO_APPS="a server gets them only with --apps"
+  : "${OPT_AI:=no}" "${OPT_MSTY:=no}" "${OPT_JDOWNLOADER:=no}" "${OPT_APPS:=none}" "${OPT_RADIO:=no}"
+else
+  : "${OPT_AI:=yes}" "${OPT_MSTY:=yes}" "${OPT_JDOWNLOADER:=yes}" "${OPT_APPS:=all}" "${OPT_RADIO:=yes}"
+fi
+[[ "$ROLE" == server ]] && OPT_MSTY=no
+
+say "  Role     $ROLE$([[ "$EXPOSE" == internet ]] && echo ', reachable from the internet by systems holding the house key')"
+say "  Scope    $([[ "$SCOPE" == lan ]] && echo 'portal open to this system and the home network' || echo 'portal on this system only')"
+
+export TARGET_USER TARGET_HOME SCOPE ARCH ROLE EXPOSE
 export OFFLINE_INSTALL_KEY="$OPT_KEY"
 export DEBIAN_FRONTEND=noninteractive
 export NEEDRESTART_MODE=a
@@ -658,18 +824,23 @@ if [[ "$ONLINE" == yes ]]; then
   else
     skip "Upgrade installed packages (--no-upgrade)"
   fi
-  must "Install core tools (rsync, aria2, firewall, discovery)" \
-    apt_install ca-certificates curl rsync aria2 ufw iproute2 avahi-daemon avahi-utils libnss-mdns
+  must "Install core tools (rsync, stunnel, aria2, firewall, discovery)" \
+    apt_install ca-certificates curl rsync stunnel4 aria2 ufw iproute2 avahi-daemon avahi-utils libnss-mdns inotify-tools
   must "Install the library reader (kiwix-tools)" apt_install kiwix-tools
   must "Install the web portal stack (Apache, PHP-FPM)" apt_install apache2 php-fpm php-cli php-xml openssl
   step "Install map and container tools (git, Podman)" apt_install git podman netavark aardvark-dns crun uidmap pipx
-  step "Install desktop applications (VLC, Kiwix)" apt_install vlc kiwix
+  if [[ "$ROLE" == server ]]; then
+    skip "Desktop applications (a server has no desktop)"
+  else
+    step "Install desktop applications (VLC, Kiwix)" apt_install vlc kiwix
+    step "Install the desktop alert helpers (dialogs, notifications)" install_alert_helpers
+  fi
   step "Install download helpers (yt-dlp, ffmpeg)" apt_install yt-dlp ffmpeg
   step "Install power tools (powertop, power-profiles-daemon)" apt_install powertop power-profiles-daemon
 else
   skip "Package installation (no internet connection)"
-  for required in rsync php aria2c kiwix-serve apache2ctl ufw; do
-    command -v "$required" >/dev/null 2>&1 || die "$required is not installed and this laptop is offline. Connect it to the internet for the first installation."
+  for required in rsync stunnel php aria2c kiwix-serve apache2ctl ufw; do
+    command -v "$required" >/dev/null 2>&1 || die "$required is not installed and this system is offline. Connect it to the internet for the first installation."
   done
 fi
 
@@ -686,9 +857,16 @@ must "Set the house key" set_house_key
 
 section "Network"
 step "Configure the firewall" configure_firewall
-step "Announce this laptop to the others" configure_discovery
+if [[ "$EXPOSE" == internet ]]; then
+  step "Withdraw any local announcement (a server on the internet is named on each system instead)" withdraw_discovery
+else
+  step "Announce this system to the others" configure_discovery
+fi
 step "Configure the web server" configure_webserver
-must "Start sharing, reader and timers" start_services
+must "Start sharing, reader, broadcasts and timers" start_services
+if ((${#OPT_SERVERS[@]} > 0)); then
+  step "Name the central servers: ${OPT_SERVERS[*]}" name_servers "${OPT_SERVERS[@]}"
+fi
 
 section "Maps"
 if [[ "$ONLINE" == yes ]]; then
@@ -700,7 +878,7 @@ fi
 
 section "Radio"
 if [[ "$OPT_RADIO" != yes ]]; then
-  skip "Radio tools (--no-radio)"
+  skip "Radio tools ($WHY_NO_RADIO)"
 elif [[ "$ONLINE" != yes ]]; then
   skip "Radio tools (no internet connection)"
 else
@@ -711,7 +889,7 @@ fi
 
 section "Desktop and AI applications"
 if [[ "$OPT_AI" != yes ]]; then
-  skip "Ollama and Msty Studio (--no-ai)"
+  skip "Ollama and Msty Studio ($WHY_NO_AI)"
 elif [[ "$ONLINE" != yes ]]; then
   skip "Ollama and Msty Studio (no internet connection)"
 else
@@ -728,14 +906,20 @@ else
     step "Install Msty Studio" install_msty
   fi
 fi
-if [[ "$OPT_JDOWNLOADER" != yes ]]; then
+if [[ "$ROLE" == server ]]; then
+  skip "JDownloader (a desktop program; a server uses the download queue)"
+elif [[ "$OPT_JDOWNLOADER" != yes ]]; then
   skip "JDownloader (--no-jdownloader)"
 elif [[ "$ONLINE" != yes ]]; then
   skip "JDownloader (no internet connection)"
 else
   step "Install JDownloader" install_jdownloader
 fi
-step "Create desktop shortcuts" desktop_shortcuts
+if [[ "$ROLE" == server ]]; then
+  skip "Desktop shortcuts and the broadcast alert (a server has no desktop)"
+else
+  step "Create desktop shortcuts and the broadcast alert" desktop_shortcuts
+fi
 
 section "Browser applications"
 APP_ARGS=()
@@ -743,7 +927,7 @@ while IFS= read -r app; do
   [[ -n "$app" ]] && APP_ARGS+=("$app")
 done < <(tr ' ,' '\n' <<<"$OPT_APPS")
 if [[ "$OPT_APPS" == none ]]; then
-  skip "Browser applications (--apps none)"
+  skip "Browser applications ($WHY_NO_APPS)"
 elif ! command -v podman >/dev/null 2>&1 && [[ "$OPT_DRY_RUN" != yes ]]; then
   skip "Browser applications (Podman is not installed)"
 else
@@ -813,7 +997,23 @@ done
 echo
 /usr/local/bin/offline doctor || true
 
-cat <<EOF
+if [[ "$ROLE" == server ]]; then
+  cat <<EOF
+
+${C_BOLD}Next${C_OFF}
+  Share the house key         sudo offline key show    then, on each other system:   sudo offline key set KEY
+  Point the others here       on each of them:         sudo offline server add $(hostname -f 2>/dev/null || hostname)
+  Fetch the reference shelf   sudo offline get household       (Wikipedia with images, WikiMed, Wikivoyage; about 130 GiB)
+  Fetch maps                  sudo offline maps get uk         or   sudo offline maps get continents
+  Archive UK websites         sudo offline queue site uk
+  Queue a download            sudo offline queue add ADDRESS --to movies
+  Release what has arrived    offline stage            then   sudo offline stage publish all
+  Check health at any time    offline doctor
+
+  Full log: $LOG_FILE
+EOF
+else
+  cat <<EOF
 
 ${C_BOLD}Next${C_OFF}
   Open the portal             http://localhost/
@@ -821,12 +1021,15 @@ ${C_BOLD}Next${C_OFF}
   Add maps                    offline maps             then   sudo offline maps get uk
   Start an app                offline apps             then   sudo offline apps start jellyfin
   Check the radios            offline radio
-  Join the other laptops      sudo offline key show    then, on each of them:   sudo offline key set KEY
+  Join the other systems      sudo offline key show    then, on each of them:   sudo offline key set KEY
+  Use a central server        sudo offline server add HOST
+  Send a family broadcast     offline broadcast "Dinner is ready"
   Check health at any time    offline doctor
 
-  Log out and back in once so that $TARGET_USER can copy files into $SHARE_ROOT
-  and use the radio hardware.
+  Log out and back in once so that $TARGET_USER can copy files into $SHARE_ROOT,
+  use the radio hardware, and see family broadcasts on the desktop.
   Full log: $LOG_FILE
 EOF
+fi
 
 ((${#STEPS_FAILED[@]} == 0)) || exit 3

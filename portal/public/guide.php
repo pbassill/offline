@@ -11,7 +11,7 @@ page_start('Guide', 'guide');
 ?>
 <section class="page-head">
   <h1>Guide</h1>
-  <p class="hero-sub">How to read, add and share what is on this laptop. Commands are typed into a terminal; those that change anything begin with <code>sudo</code>.</p>
+  <p class="hero-sub">How to read, add and share what is on this system. Commands are typed into a terminal; those that change anything begin with <code>sudo</code>.</p>
 </section>
 
 <div class="row g-5">
@@ -19,12 +19,12 @@ page_start('Guide', 'guide');
 
 <section id="read" aria-labelledby="g-read">
   <h2 id="g-read">Read and watch</h2>
-  <p>The <a href="<?= e(reader_url()) ?>">library reader</a> opens every installed title in a browser and searches inside them. The <a href="/media.php">media pages</a> play films and music that browsers understand; anything else downloads, or opens in VLC on the laptop itself.</p>
+  <p>The <a href="<?= e(reader_url()) ?>">library reader</a> opens every installed title in a browser and searches inside them. The <a href="/media.php">media pages</a> play films and music that browsers understand; anything else downloads, or opens in VLC on the system itself.</p>
 <?php if ($lan) : ?>
   <p>Phones, tablets and other computers on the home network can use the same pages at
     <code>http://<?= e($hostName) ?>.local/</code><?php foreach ($addresses as $ip) : ?> or <code>http://<?= e($ip) ?>/</code><?php endforeach; ?>. Addresses outside the home network are refused.</p>
 <?php else : ?>
-  <p>These pages are restricted to this laptop. To let other devices on the home network use them, set <code>PORTAL_SCOPE=lan</code> in <code>/etc/offline/offline.conf</code> and run the installer again.</p>
+  <p>These pages are restricted to this system. To let other devices on the home network use them, set <code>PORTAL_SCOPE=lan</code> in <code>/etc/offline/offline.conf</code> and run the installer again.</p>
 <?php endif; ?>
 </section>
 
@@ -65,7 +65,7 @@ sudo offline apps stop jellyfin</code></pre>
 
 <section id="radio" aria-labelledby="g-radio">
   <h2 id="g-radio">Use the radios</h2>
-  <p>The <a href="/radio.php">radio page</a> holds the PMR446 channel table, the mesh settings and the receiver commands. To see what is plugged in and whether this laptop can talk to it:</p>
+  <p>The <a href="/radio.php">radio page</a> holds the PMR446 channel table, the mesh settings and the receiver commands. To see what is plugged in and whether this system can talk to it:</p>
   <pre><code>offline radio
 offline radio listen pmr
 offline radio mesh nodes</code></pre>
@@ -76,7 +76,7 @@ offline radio mesh nodes</code></pre>
   <pre><code>sudo offline update
 sudo offline prune
 sudo offline verify</code></pre>
-  <p><code>update</code> fetches newer editions of what is installed and removes the edition each replaces. <code>prune</code> removes superseded editions left behind. <code>verify</code> re-reads each file and compares it with the checksum Kiwix publishes, which is worth doing for titles that arrived from another laptop.</p>
+  <p><code>update</code> fetches newer editions of what is installed and removes the edition each replaces. <code>prune</code> removes superseded editions left behind. <code>verify</code> re-reads each file and compares it with the checksum Kiwix publishes, which is worth doing for titles that arrived from another system.</p>
 </section>
 
 <section id="add-media" aria-labelledby="g-media">
@@ -88,15 +88,37 @@ yt-dlp -f "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]" ADDRESS</code></pre>
 </section>
 
 <section id="share" aria-labelledby="g-share">
-  <h2 id="g-share">Share between laptops</h2>
-  <p>Laptops exchange content only with others that hold the same house key. Show the key on one laptop and enter it on each of the others:</p>
+  <h2 id="g-share">Share between systems</h2>
+  <p>Systems exchange content only with others that hold the same house key. Show the key on one system and enter it on each of the others:</p>
   <pre><code>sudo offline key show
 sudo offline key set XXXXX-XXXXX-XXXXX-XXXXX-XXXXX</code></pre>
-  <p>From then on each laptop checks the network every five minutes and copies anything it lacks. To run an exchange at once, or to see what one would fetch:</p>
+  <p>From then on each system checks the network every five minutes and copies anything it lacks. To run an exchange at once, or to see what one would fetch:</p>
   <pre><code>sudo offline sync
 sudo offline sync --dry-run
 offline peers</code></pre>
-  <p>The key is a shared secret for the household. It proves that the other machine is one of yours; it does not encrypt the transfer, so the content travels over the home network in the clear, as it would from any media server.</p>
+  <p>The key is a shared secret for the household. Every connection between two systems is encrypted with a key derived from it, and a system that does not hold it cannot connect at all, let alone see what is on offer.</p>
+</section>
+
+<section id="servers" aria-labelledby="g-servers">
+  <h2 id="g-servers">Use a central server</h2>
+  <p>A server is the same software without the desktop. It downloads and holds content for the whole household, and there may be several: one at home, one in a datacentre that a system away from home can still reach. Name a server on each system that should pull from it:</p>
+  <pre><code>sudo offline server add files.example.org
+sudo offline server test
+offline server</code></pre>
+  <p>On a server, downloads go into a staging area first and are shared only once published:</p>
+  <pre><code>sudo offline queue add ADDRESS --to movies
+sudo offline queue site uk
+offline stage
+sudo offline stage publish all</code></pre>
+</section>
+
+<section id="broadcast" aria-labelledby="g-broadcast">
+  <h2 id="g-broadcast">Send a family broadcast</h2>
+  <p>A broadcast goes to every screen in the household and to the mesh radios. Open <em>Family broadcast</em> from the applications menu, or type:</p>
+  <pre><code>offline broadcast "Dinner is ready"
+offline broadcast --urgent "Come home now"
+offline broadcast</code></pre>
+  <p>The last command lists recent broadcasts and shows which systems the most recent one from here reached. A system that was switched off collects what it missed within a minute of waking. The mesh carries about two hundred characters, so keep an urgent message short.</p>
 </section>
 
 <section id="power" aria-labelledby="g-power">
@@ -104,7 +126,7 @@ offline peers</code></pre>
   <pre><code>offline power
 offline power saver
 offline power balanced</code></pre>
-  <p>The first command shows the battery, the estimated running time and the power profile. On battery below <?= e((string) Offline\config_int('SYNC_MIN_BATTERY', 0, 100)) ?> % the laptop stops fetching from the others until it is charged again.</p>
+  <p>The first command shows the battery, the estimated running time and the power profile. On battery below <?= e((string) Offline\config_int('SYNC_MIN_BATTERY', 0, 100)) ?> % the system stops fetching from the others until it is charged again.</p>
 </section>
 
 <section id="health" aria-labelledby="g-health">
@@ -116,7 +138,7 @@ offline doctor</code></pre>
 
 <section id="ai" aria-labelledby="g-ai">
   <h2 id="g-ai">Ask the local AI model</h2>
-  <p>Ollama runs language models on the laptop itself, with no internet. It answers only on this laptop.</p>
+  <p>Ollama runs language models on the system itself, with no internet. It answers only on this system.</p>
   <pre><code>ollama run qwen2.5:0.5b
 ollama list</code></pre>
   <p>Small models are quick and frugal with the battery but are often wrong. Treat an answer as a prompt for where to look in the library, not as the reference itself.</p>
@@ -131,7 +153,8 @@ ollama list</code></pre>
     <dt>Library titles</dt><dd><code>/srv/offline/knowledge/zim</code><br>also reachable as <code>~/Documents/Kiwix-zims</code></dd>
     <dt>Media</dt><dd><code>/srv/offline/media</code></dd>
     <dt>Maps</dt><dd><code>/srv/offline/maps</code></dd>
-    <dt>App data</dt><dd><code>/srv/offline/apps</code>, not shared with other laptops</dd>
+    <dt>Staging area</dt><dd><code>/srv/offline/staging</code>, not shared until published</dd>
+    <dt>App data</dt><dd><code>/srv/offline/apps</code>, not shared with other systems</dd>
     <dt>Mesh firmware</dt><dd><code>/srv/offline/radio/firmware</code></dd>
     <dt>Settings</dt><dd><code>/etc/offline/offline.conf</code></dd>
     <dt>Your own catalogue entries</dt><dd><code>/etc/offline/catalogue.local.tsv</code></dd>
@@ -141,8 +164,8 @@ ollama list</code></pre>
   <dl class="facts facts-stack">
     <dt>80</dt><dd>These pages</dd>
     <dt><?= Offline\READER_PORT ?></dt><dd>Library reader</dd>
-    <dt><?= Offline\SYNC_PORT ?></dt><dd>Exchange between laptops, house key required</dd>
-    <dt>11434</dt><dd>Ollama, this laptop only</dd>
+    <dt><?= Offline\TLS_PORT ?></dt><dd>Exchange between systems, encrypted, house key required</dd>
+    <dt>11434</dt><dd>Ollama, this system only</dd>
     <dt>8100 to 8500</dt><dd>Apps, each on its own port; see the apps page</dd>
   </dl>
   <p class="row-note">The firewall admits the first three, and the ports of installed apps, from private home-network addresses only, and nothing else.</p>

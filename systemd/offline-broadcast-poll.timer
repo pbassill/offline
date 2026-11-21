@@ -1,0 +1,11 @@
+[Unit]
+Description=Offline: ask the other systems for missed broadcasts every minute
+
+[Timer]
+OnBootSec=45s
+OnUnitActiveSec=1min
+AccuracySec=5s
+Unit=offline-broadcast-poll.service
+
+[Install]
+WantedBy=timers.target

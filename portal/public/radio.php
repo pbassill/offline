@@ -63,7 +63,7 @@ offline radio mesh nodes
 offline radio mesh send "Home. All well."
 offline radio mesh region EU_868</code></pre>
   <p>The default channel uses a published key, so anyone nearby can read it. Give the household its own channel with its own key in the Meshtastic app or Meshtastic Web, and copy that channel to every node by its QR code.</p>
-  <p>Firmware is kept on this laptop so that a node can be reflashed with no internet: <code>sudo offline radio firmware</code> fetches the current release into <code>/srv/offline/radio/firmware</code>. ESP32 boards are flashed with <code>esptool</code> using the script inside the bundle; nRF52 boards appear as a USB drive when their reset button is pressed twice, and RP2040 boards when the BOOTSEL button is held while plugging in; both take the <code>.uf2</code> file by copying.</p>
+  <p>Firmware is kept on this system so that a node can be reflashed with no internet: <code>sudo offline radio firmware</code> fetches the current release into <code>/srv/offline/radio/firmware</code>. ESP32 boards are flashed with <code>esptool</code> using the script inside the bundle; nRF52 boards appear as a USB drive when their reset button is pressed twice, and RP2040 boards when the BOOTSEL button is held while plugging in; both take the <code>.uf2</code> file by copying.</p>
 </section>
 
 <section aria-labelledby="r-sdr">
@@ -113,7 +113,7 @@ welle-io                           DAB radio</code></pre>
 <aside class="col-lg-4" aria-labelledby="r-now">
   <h2 id="r-now">Plugged in now</h2>
 <?php if (($radio['devices'] ?? []) === []) : ?>
-  <p class="row-note">No receiver or mesh node is recognised on this laptop's USB ports.</p>
+  <p class="row-note">No receiver or mesh node is recognised on this system's USB ports.</p>
 <?php else : ?>
   <ul class="services">
 <?php foreach ($radio['devices'] as $device) : ?>
@@ -122,7 +122,7 @@ welle-io                           DAB radio</code></pre>
   </ul>
 <?php endif; ?>
 
-  <h3>Tools on this laptop</h3>
+  <h3>Tools on this system</h3>
   <ul class="services">
 <?php foreach (($radio['tools'] ?? []) as $tool => $present) : ?>
     <li class="<?= $present ? 'is-ok' : 'is-off' ?>"><i class="fa-solid <?= $present ? 'fa-circle-check' : 'fa-circle-minus' ?> fa-fw" aria-hidden="true"></i><span><?= e(explode('|', (string) $tool)[0]) ?></span><span class="service-state"><?= $present ? 'installed' : 'missing' ?></span></li>

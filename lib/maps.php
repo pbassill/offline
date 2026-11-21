@@ -126,7 +126,7 @@ function maps_setup(): bool
         }
         run(['rm', '-rf', '--', $work], 60);
         if (!$ok) {
-            warn('The map fonts and symbols could not be fetched. Is this laptop online?');
+            warn('The map fonts and symbols could not be fetched. Is this system online?');
             return false;
         }
         run(['chmod', '-R', 'a+rX,g+w', $assets], 60);
@@ -138,7 +138,7 @@ function maps_setup(): bool
         }
         $build = latest_world_build();
         if ($build === null) {
-            warn('The Protomaps build list could not be reached. Is this laptop online?');
+            warn('The Protomaps build list could not be reached. Is this system online?');
             return false;
         }
         out('Fetching the low-detail world map (zoom 0 to ' . WORLD_MAX_ZOOM . ') ...');
@@ -172,7 +172,7 @@ function command_maps(array $args): int
     if ($action === 'list' || $action === 'catalogue') {
         $installed = array_column(installed_maps(), null, 'id');
         $ready = maps_ready();
-        heading('On this laptop');
+        heading('On this system');
         if ($installed === []) {
             out('  No maps yet. Start with: sudo offline maps setup   then   sudo offline maps get REGION');
         } else {
@@ -192,7 +192,8 @@ function command_maps(array $args): int
             ], $members));
         }
         out();
-        out('Fetch with: sudo offline maps get REGION ...   or   sudo offline maps get --bbox W,S,E,N --name NAME');
+        out('Fetch with: sudo offline maps get REGION|GROUP ...   or   sudo offline maps get --bbox W,S,E,N --name NAME');
+        out('A group name fetches every region in it: sudo offline maps get continents');
         out('Add --maxzoom 12 for a smaller file with less street detail (the default, 15, is full detail).');
         return 0;
     }
@@ -251,11 +252,16 @@ function command_maps(array $args): int
         $jobs[] = ['id' => $name, 'name' => $name, 'kind' => 'bbox', 'bbox' => $bbox];
     }
     foreach ($wanted as $id) {
-        if (!isset($regions[$id])) {
-            fail("No map region called \"" . printable($id) . '". Run: offline maps');
+        // A region is fetched by its own name; a group name stands for every region in it.
+        $members = isset($regions[$id]) ? [$regions[$id]] : array_values(array_filter($regions, static fn (array $r): bool => $r['group'] === $id));
+        if ($members === []) {
+            fail("No map region or group called \"" . printable($id) . '". Run: offline maps');
         }
-        $jobs[] = $regions[$id] + ['bbox' => $regions[$id]['kind'] === 'bbox' ? parse_bbox($regions[$id]['value']) : null];
+        foreach ($members as $region) {
+            $jobs[$region['id']] = $region + ['bbox' => $region['kind'] === 'bbox' ? parse_bbox($region['value']) : null];
+        }
     }
+    $jobs = array_values($jobs);
     if ($jobs === []) {
         fail('Usage: sudo offline maps get REGION ...   or   sudo offline maps get --bbox W,S,E,N --name NAME');
     }
@@ -284,8 +290,8 @@ function command_maps(array $args): int
             if ($dryRun) {
                 continue;
             }
-            if (free_bytes() < $reserve) {
-                warn('Free space is already below the reserve; skipped.');
+            if (free_bytes() < $reserve || ($job['approx'] ?? 0) + $reserve > free_bytes()) {
+                warn('Not enough free space for this map' . (($job['approx'] ?? 0) > 0 ? ' (about ' . human_bytes($job['approx']) . ')' : '') . '; skipped.');
                 continue;
             }
             if (!confirm('  Fetch it (the archive size is on the last line above)?', $yes)) {

@@ -1,0 +1,23 @@
+[Unit]
+Description=Offline: archive queued websites as library titles
+Documentation=https://github.com/pbassill/offline
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Starting a container needs root. The crawl itself is confined by the container:
+# its own user namespace, no new privileges, memory and process limits, and a
+# single writable folder in the staging area. Results are recorded by the
+# unprivileged "offline" account.
+ExecStart=/usr/local/bin/offline queue archive
+TimeoutStartSec=infinity
+Nice=10
+IOSchedulingClass=idle
+ProtectHome=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+RestrictRealtime=yes
+LockPersonality=yes
+SystemCallArchitectures=native

@@ -17,16 +17,16 @@ page_start('Library', 'library');
 ?>
 <section class="page-head">
   <h1>Library</h1>
-  <p class="hero-sub"><?= count($zims) ?> <?= count($zims) === 1 ? 'title' : 'titles' ?> on this laptop, <?= e(human_bytes((int) ($s['knowledge']['bytes'] ?? 0))) ?> in all. Titles open in the reader, which searches inside every one of them.</p>
+  <p class="hero-sub"><?= count($zims) ?> <?= count($zims) === 1 ? 'title' : 'titles' ?> on this system, <?= e(human_bytes((int) ($s['knowledge']['bytes'] ?? 0))) ?> in all. Titles open in the reader, which searches inside every one of them.</p>
 <?php if ($zims !== []) : ?>
   <a class="btn btn-primary" href="<?= e(reader_url()) ?>"><i class="fa-solid fa-book-open" aria-hidden="true"></i> Open the library reader</a>
 <?php endif; ?>
 </section>
 
 <section aria-labelledby="h-installed">
-  <h2 id="h-installed">On this laptop</h2>
+  <h2 id="h-installed">On this system</h2>
 <?php if ($zims === []) : ?>
-  <p class="empty">Nothing yet. Pick a pack below and run its command in a terminal while this laptop is online.</p>
+  <p class="empty">Nothing yet. Pick a pack below and run its command in a terminal while this system is online.</p>
 <?php else : ?>
   <div class="table-responsive">
   <table class="table align-middle">
@@ -59,7 +59,7 @@ page_start('Library', 'library');
 
 <section aria-labelledby="h-available">
   <h2 id="h-available">Available to add</h2>
-  <p>These packs come from the Kiwix library; most are the curated collections of Project NOMAD, in three tiers per subject. A standard pack brings its essential pack with it, and a comprehensive pack brings both. <code>sudo offline get essential</code> fetches the essential tier of every subject at once. Downloading needs an internet connection and a terminal; each file is checked against the checksum Kiwix publishes before it is added. Sizes marked “about” are estimates until this laptop has looked them up (<code>sudo offline catalogue --check</code>).</p>
+  <p>These packs come from the Kiwix library; most are the curated collections of Project NOMAD, in three tiers per subject. A standard pack brings its essential pack with it, and a comprehensive pack brings both. <code>sudo offline get essential</code> fetches the essential tier of every subject at once. Downloading needs an internet connection and a terminal; each file is checked against the checksum Kiwix publishes before it is added. Sizes marked “about” are estimates until this system has looked them up (<code>sudo offline catalogue --check</code>).</p>
   <p>For minor ailments there is also a short <a href="/remedies.php">remedies reference</a> that needs no download.</p>
 <?php foreach ($packs as $pack => $entries) :
     $have = count(array_filter($entries, static fn (array $e): bool => isset($installed[$e['zim']])));

@@ -1,0 +1,48 @@
+[Unit]
+Description=Offline: collect family broadcasts this system has missed
+Documentation=https://github.com/pbassill/offline
+After=network.target offline-tls.service
+
+[Service]
+ExecStart=/usr/local/bin/offline broadcast process --poll
+Type=oneshot
+User=offline
+Group=offline
+# dialout reaches a Meshtastic node on a serial port; tty lets a broadcast be
+# written to open terminals, which is all a server has for a screen.
+SupplementaryGroups=dialout tty
+TimeoutStartSec=5min
+Nice=-5
+
+ReadWritePaths=/var/lib/offline /run/offline
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+# Serial ports and terminals only; no other device is visible to this job.
+PrivateDevices=no
+DevicePolicy=closed
+DeviceAllow=char-ttyUSB rw
+DeviceAllow=char-ttyACM rw
+DeviceAllow=char-pts rw
+UMask=0027
+# Private networks only. Naming a central server on the internet adds a drop-in
+# that widens this (sudo offline server add HOST).
+IPAddressDeny=any
+IPAddressAllow=localhost 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 169.254.0.0/16

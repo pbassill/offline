@@ -14,8 +14,9 @@ if (!function_exists('Offline\\path')) {
 }
 
 header_remove('X-Powered-By');
+// Scripts may fetch from this portal alone, which is how a page learns of a new family broadcast.
 // A page that needs more (only the map viewer does) defines PORTAL_CSP before loading this file.
-header('Content-Security-Policy: ' . (defined('PORTAL_CSP') ? PORTAL_CSP : "default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; font-src 'self'; media-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"));
+header('Content-Security-Policy: ' . (defined('PORTAL_CSP') ? PORTAL_CSP : "default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; font-src 'self'; media-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"));
 header('X-Content-Type-Options: nosniff');
 header('X-Frame-Options: DENY');
 header('Referrer-Policy: no-referrer');
@@ -42,6 +43,31 @@ function portal_status(): array
 {
     static $status = null;
     return $status ??= Offline\read_json(Offline\path('status'));
+}
+
+/**
+ * Family broadcasts still current, newest first. The broadcast service writes
+ * this file only after checking each one's signature against the house key.
+ */
+function portal_broadcasts(): array
+{
+    $hours = Offline\config_int('BROADCAST_HOURS', 1, 24);
+    $current = [];
+    foreach (Offline\read_json(Offline\path('alerts'))['broadcasts'] ?? [] as $entry) {
+        $sent = strtotime((string) ($entry['sent'] ?? ''));
+        if (!is_array($entry) || $sent === false || time() - $sent > $hours * 3600
+            || preg_match('/^\d{8}T\d{6}Z-[0-9a-f]{8}$/', (string) ($entry['id'] ?? '')) !== 1) {
+            continue;
+        }
+        $current[] = [
+            'id' => (string) $entry['id'],
+            'urgent' => ($entry['level'] ?? '') === 'urgent',
+            'from' => ((string) ($entry['by'] ?? '') !== '' ? $entry['by'] . ' at ' : '') . (string) ($entry['from'] ?? ''),
+            'sent' => Offline\utc_display((string) $entry['sent']),
+            'text' => (string) ($entry['text'] ?? ''),
+        ];
+    }
+    return array_slice($current, 0, 5);
 }
 
 /** Host name the visitor used, validated, without any port. */
@@ -104,7 +130,7 @@ function page_start(string $title, string $active, array $extraStyles = []): voi
     $nav = [
         'index' => ['Overview', 'fa-gauge'], 'library' => ['Library', 'fa-book-open'], 'media' => ['Media', 'fa-film'],
         'maps' => ['Maps', 'fa-map-location-dot'], 'apps' => ['Apps', 'fa-table-cells-large'], 'radio' => ['Radio', 'fa-tower-broadcast'],
-        'peers' => ['Laptops', 'fa-laptop'], 'guide' => ['Guide', 'fa-circle-question'],
+        'peers' => ['Systems', 'fa-network-wired'], 'guide' => ['Guide', 'fa-circle-question'],
     ];
     ?>
 <!doctype html>
@@ -145,6 +171,18 @@ function page_start(string $title, string $active, array $extraStyles = []): voi
     </div>
   </div>
 </nav>
+<div id="broadcasts" class="broadcasts container-xl" aria-live="assertive">
+<?php foreach (portal_broadcasts() as $b) : ?>
+  <div class="broadcast<?= $b['urgent'] ? ' broadcast-urgent' : '' ?>" role="<?= $b['urgent'] ? 'alert' : 'status' ?>" data-broadcast="<?= e($b['id']) ?>">
+    <i class="fa-solid <?= $b['urgent'] ? 'fa-triangle-exclamation' : 'fa-bullhorn' ?> fa-fw" aria-hidden="true"></i>
+    <div class="broadcast-body">
+      <p class="broadcast-text"><?= e($b['text']) ?></p>
+      <p class="broadcast-meta"><?= $b['urgent'] ? 'Urgent family broadcast' : 'Family broadcast' ?> from <?= e($b['from']) ?>, <?= e($b['sent']) ?></p>
+    </div>
+    <button type="button" class="btn btn-sm broadcast-dismiss" data-dismiss-broadcast="<?= e($b['id']) ?>"><i class="fa-solid fa-check" aria-hidden="true"></i> Seen</button>
+  </div>
+<?php endforeach; ?>
+</div>
 <main id="content" class="container-xl">
 <?php
     $generated = strtotime((string) ($status['generated'] ?? ''));
@@ -163,9 +201,10 @@ function page_end(): void
 <footer class="container-xl site-footer">
   <span>Offline <?= e(Offline\VERSION) ?></span>
   <span>Status as at <?= e(Offline\utc_display($status['generated'] ?? null)) ?></span>
-  <span>Everything on this page is served from this laptop.</span>
+  <span>Everything on this page is served from this system.</span>
 </footer>
 <script src="/assets/js/offline.js" defer></script>
+<script src="/assets/js/broadcasts.js" defer></script>
 </body>
 </html>
 <?php

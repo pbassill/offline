@@ -1,5 +1,5 @@
 [Unit]
-Description=Offline content sharing (rsync daemon, TCP 47001)
+Description=Offline content sharing daemon (rsync, 127.0.0.1:47001)
 Documentation=https://github.com/pbassill/offline
 After=network.target
 ConditionPathExists=/etc/offline/rsyncd.secrets
@@ -15,7 +15,7 @@ RestartSec=10
 # Read-only view of the system; the daemon only ever serves files. Its one
 # writable path holds the connection-count lock.
 ProtectSystem=strict
-ReadWritePaths=/run/offline
+ReadWritePaths=/run/offline /var/lib/offline/inbox
 ProtectHome=yes
 PrivateTmp=yes
 PrivateDevices=yes
@@ -40,9 +40,9 @@ SystemCallArchitectures=native
 SystemCallFilter=@system-service
 SystemCallErrorNumber=EPERM
 UMask=0027
-# Private networks only, whatever the firewall says.
+# This machine only: other systems come through offline-tls.service.
 IPAddressDeny=any
-IPAddressAllow=localhost 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 169.254.0.0/16
+IPAddressAllow=localhost
 
 [Install]
 WantedBy=multi-user.target

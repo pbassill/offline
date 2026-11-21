@@ -18,6 +18,7 @@
   --o-ok: #1c7447;
   --o-warn: #a15c00;
   --o-bad: #b3261e;
+  --o-bad-ink: #ffffff;
   --o-track: #dde4e2;
   --o-radius: 0.375rem;
   --o-font: "Ubuntu", "Ubuntu Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
@@ -36,6 +37,7 @@
   --o-ok: #6fd09a;
   --o-warn: #f0b354;
   --o-bad: #ff8a80;
+  --o-bad-ink: #2b0a07;
   --o-track: #24313a;
 }
 
@@ -51,6 +53,7 @@
   --o-ok: #3dff7f;
   --o-warn: #3dff7f;
   --o-bad: #3dff7f;
+  --o-bad-ink: #000000;
   --o-track: #0b3317;
   --o-radius: 0;
   --o-font: "DejaVu Sans Mono", "Ubuntu Mono", ui-monospace, Menlo, Consolas, monospace;
@@ -613,6 +616,77 @@ td.is-off {
   font-size: 0.875rem;
 }
 
+/* Family broadcasts: the one thing on a page that is allowed to shout. */
+
+.broadcast {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.85rem;
+  margin-top: 1rem;
+  padding: 0.85rem 1rem;
+  background: var(--o-surface);
+  border: 1px solid var(--o-accent);
+  border-left-width: 0.4rem;
+  border-radius: var(--o-radius);
+}
+
+.broadcast[hidden] {
+  display: none;
+}
+
+.broadcast > i {
+  color: var(--o-accent);
+  font-size: 1.35rem;
+  margin-top: 0.2rem;
+}
+
+.broadcast-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.broadcast-text {
+  margin: 0;
+  font-size: 1.2rem;
+  font-weight: 500;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.broadcast-meta {
+  margin: 0.2rem 0 0;
+  color: var(--o-muted);
+  font-size: 0.875rem;
+}
+
+.broadcast-dismiss {
+  border: 1px solid var(--o-rule);
+  color: var(--o-ink);
+  white-space: nowrap;
+}
+
+.broadcast-dismiss:hover,
+.broadcast-dismiss:focus-visible {
+  border-color: currentColor;
+  color: inherit;
+}
+
+.broadcast-urgent {
+  background: var(--o-bad);
+  border-color: var(--o-bad);
+  color: var(--o-bad-ink);
+}
+
+.broadcast-urgent > i,
+.broadcast-urgent .broadcast-meta,
+.broadcast-urgent .broadcast-dismiss {
+  color: var(--o-bad-ink);
+}
+
+.broadcast-urgent .broadcast-dismiss {
+  border-color: var(--o-bad-ink);
+}
+
 /*
  * VT100. The terminal had four character attributes: bold, underline, blink
  * and reverse video. This theme uses those and nothing else for emphasis.
@@ -858,4 +932,44 @@ td.is-off {
 
 .masthead .nav-link {
   padding-inline: 0.6rem;
+}
+
+/* An urgent broadcast is reverse video, and its marker blinks as the terminal's would. */
+[data-theme="vt100"] .broadcast {
+  border-left-width: 1px;
+}
+
+[data-theme="vt100"] .broadcast-text {
+  font-weight: 700;
+}
+
+[data-theme="vt100"] .broadcast-urgent {
+  text-shadow: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  [data-theme="vt100"] .broadcast-urgent > i {
+    animation: vt100-blink 1.2s steps(1, end) infinite;
+  }
+}
+
+@keyframes vt100-blink {
+  50% {
+    visibility: hidden;
+  }
+}
+
+/* Fixed-width letters are wider: between the menu breakpoint and a roomy screen, tighten the masthead so it fits. */
+@media (min-width: 1200px) and (max-width: 1439.98px) {
+  [data-theme="vt100"] .masthead .nav-link {
+    padding-inline: 0.4rem;
+  }
+
+  [data-theme="vt100"] .theme-switch .btn {
+    padding-inline: 0.35rem;
+  }
+
+  [data-theme="vt100"] .brand-host {
+    display: none;
+  }
 }

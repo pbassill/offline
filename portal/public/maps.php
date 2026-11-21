@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 
-// The map viewer fetches tiles, fonts and symbols from this laptop and runs
+// The map viewer fetches tiles, fonts and symbols from this system and runs
 // its renderer in a worker, so it needs connect-src and worker-src; both stay 'self'.
 define('PORTAL_CSP', "default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'");
 require __DIR__ . '/../app/bootstrap.php';
@@ -24,7 +24,7 @@ page_start('Maps', 'maps', ['/assets/maplibre/maplibre-gl.css']);
 ?>
 <section class="page-head">
   <h1>Maps</h1>
-  <p class="hero-sub"><?php if ($detailed !== []) : ?>Street-level maps of <?= count($detailed) ?> <?= count($detailed) === 1 ? 'region' : 'regions' ?>, drawn on this laptop from OpenStreetMap data. Nothing is fetched from the internet.<?php else : ?>Offline maps drawn on this laptop from OpenStreetMap data.<?php endif; ?></p>
+  <p class="hero-sub"><?php if ($detailed !== []) : ?>Street-level maps of <?= count($detailed) ?> <?= count($detailed) === 1 ? 'region' : 'regions' ?>, drawn on this system from OpenStreetMap data. Nothing is fetched from the internet.<?php else : ?>Offline maps drawn on this system from OpenStreetMap data.<?php endif; ?></p>
 </section>
 
 <?php if ($regions === [] || !$assets) : ?>

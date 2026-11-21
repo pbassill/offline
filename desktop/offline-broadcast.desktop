@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Family broadcast
+Comment=Send a message to every screen in the house and to the mesh radios
+Exec=/usr/local/lib/offline/desktop/offline-broadcast-send
+Icon=dialog-warning
+Terminal=false
+Categories=Utility;Network;
+Keywords=alert;message;announce;family;

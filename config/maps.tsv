@@ -5,20 +5,33 @@
 #   kind url:  value is a ready-made .pmtiles file. The us-* groups are the regional
 #              map collections of Project NOMAD (Apache License 2.0).
 # Any other area can be fetched with: sudo offline maps get --bbox W,S,E,N --name NAME
+# A group name stands for every region in it: sudo offline maps get continents
+# The continents are generous rectangles that overlap at their edges; sizes were
+# measured at full street detail (zoom 15) and grow a little with each build.
 # Put your own regions in /etc/offline/maps.local.tsv using the same layout.
-uk	europe	United Kingdom	bbox	-8.7,49.8,1.8,60.9	0
-ireland	europe	Ireland	bbox	-10.7,51.35,-5.35,55.45	0
-france	europe	France	bbox	-5.3,41.3,9.7,51.15	0
-spain	europe	Spain and the Balearic Islands	bbox	-9.4,35.9,4.4,43.85	0
-canary-islands	europe	Canary Islands	bbox	-18.25,27.55,-13.3,29.5	0
-portugal	europe	Portugal	bbox	-9.6,36.9,-6.15,42.2	0
-belgium	europe	Belgium	bbox	2.5,49.45,6.45,51.55	0
-netherlands	europe	Netherlands	bbox	3.3,50.7,7.3,53.6	0
-germany	europe	Germany	bbox	5.8,47.2,15.1,55.1	0
-switzerland	europe	Switzerland	bbox	5.9,45.8,10.5,47.85	0
-austria	europe	Austria	bbox	9.5,46.35,17.2,49.05	0
-italy	europe	Italy	bbox	6.6,36.6,18.6,47.1	0
-denmark	europe	Denmark	bbox	8.0,54.5,15.3,57.8	0
+europe	continents	Europe, with Iceland, Turkey and western Russia	bbox	-25,34,60,72	50500
+africa	continents	Africa, with Madagascar and the Arabian peninsula	bbox	-26,-35.5,64,38	14300
+asia	continents	Asia, from the Levant to Japan and Indonesia	bbox	25,-11.5,180,82	0
+north-america	continents	North and Central America, the Caribbean and Greenland	bbox	-170,5,-10,84	35300
+south-america	continents	South America	bbox	-93,-56.5,-32,13.5	8500
+oceania	continents	Australia, New Zealand, New Guinea and the western Pacific	bbox	110,-50,180,1	3900
+england	uk-nations	England	bbox	-6.5,49.8,1.8,55.85	0
+scotland	uk-nations	Scotland, with Orkney and Shetland	bbox	-8.7,54.6,-0.7,60.9	0
+wales	uk-nations	Wales	bbox	-5.4,51.3,-2.6,53.5	0
+northern-ireland	uk-nations	Northern Ireland	bbox	-8.2,54.0,-5.4,55.35	0
+uk	european-countries	United Kingdom	bbox	-8.7,49.8,1.8,60.9	2900
+ireland	european-countries	Ireland	bbox	-10.7,51.35,-5.35,55.45	0
+france	european-countries	France	bbox	-5.3,41.3,9.7,51.15	0
+spain	european-countries	Spain and the Balearic Islands	bbox	-9.4,35.9,4.4,43.85	0
+canary-islands	european-countries	Canary Islands	bbox	-18.25,27.55,-13.3,29.5	0
+portugal	european-countries	Portugal	bbox	-9.6,36.9,-6.15,42.2	0
+belgium	european-countries	Belgium	bbox	2.5,49.45,6.45,51.55	0
+netherlands	european-countries	Netherlands	bbox	3.3,50.7,7.3,53.6	0
+germany	european-countries	Germany	bbox	5.8,47.2,15.1,55.1	0
+switzerland	european-countries	Switzerland	bbox	5.9,45.8,10.5,47.85	0
+austria	european-countries	Austria	bbox	9.5,46.35,17.2,49.05	0
+italy	european-countries	Italy	bbox	6.6,36.6,18.6,47.1	0
+denmark	european-countries	Denmark	bbox	8.0,54.5,15.3,57.8	0
 alaska	us-pacific	Alaska	url	https://github.com/Crosstalk-Solutions/project-nomad-maps/raw/refs/heads/master/pmtiles/alaska_2025-12.pmtiles	684
 california	us-pacific	California	url	https://github.com/Crosstalk-Solutions/project-nomad-maps/raw/refs/heads/master/pmtiles/california_2025-12.pmtiles	1100
 hawaii	us-pacific	Hawaii	url	https://github.com/Crosstalk-Solutions/project-nomad-maps/raw/refs/heads/master/pmtiles/hawaii_2025-12.pmtiles	28

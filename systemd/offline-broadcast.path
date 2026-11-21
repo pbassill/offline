@@ -1,0 +1,13 @@
+[Unit]
+Description=Offline: watch for family broadcasts to send or to show
+Documentation=https://github.com/pbassill/offline
+
+[Path]
+# The outbox takes requests from people on this machine; the inbox takes signed
+# broadcasts pushed here by other systems.
+PathChanged=/var/lib/offline/outbox
+PathChanged=/var/lib/offline/inbox
+Unit=offline-broadcast.service
+
+[Install]
+WantedBy=multi-user.target
