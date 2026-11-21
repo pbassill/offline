@@ -1,0 +1,35 @@
+# Offline application: File Browser
+#
+# Upstream archived this project on 2026-09-01 and publishes no further security
+# fixes. It is offered because Project NOMAD ships it, is left out of "all", and
+# mounts the shared folders read-only. Prefer not to leave it running.
+# Installed, started and removed with "sudo offline apps". The container's root user is
+# mapped to an unprivileged range on the host, it cannot gain privileges, and its port is
+# published on 127.0.0.1 only.
+
+[Unit]
+Description=Offline app: File Browser
+Documentation=https://github.com/pbassill/offline
+After=network-online.target
+Wants=network-online.target
+
+[Container]
+ContainerName=offline-app-filebrowser
+Image=docker.io/filebrowser/filebrowser:v2@sha256:a469ea076d4a1b4b1d86a41d130f2f536cd9da996a2b1fb39c0d7635f9d89b9a
+PublishPort=127.0.0.1:18410:8080
+Volume=/srv/offline/apps/filebrowser/files:/srv:U
+Volume=/srv/offline/apps/filebrowser/db:/db:U
+Volume=/srv/offline/media:/srv/media:ro
+Volume=/srv/offline/knowledge:/srv/library:ro
+Volume=/srv/offline/maps:/srv/maps:ro
+EnvironmentFile=/etc/offline/apps/filebrowser.env
+# Runs as the image's ordinary user on an unprivileged port.
+Exec=--root /srv --database /db/.filebrowser.db --address 0.0.0.0 --port 8080
+NoNewPrivileges=true
+LogDriver=journald
+PodmanArgs=--pull=never --uidmap=0:1700000:65536 --gidmap=0:1700000:65536 --memory=256m --pids-limit=512
+
+[Service]
+Restart=on-failure
+RestartSec=15
+TimeoutStartSec=300

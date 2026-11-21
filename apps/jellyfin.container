@@ -1,0 +1,26 @@
+# Offline application: Jellyfin
+# Installed, started and removed with "sudo offline apps". The container's root user is
+# mapped to an unprivileged range on the host, it cannot gain privileges, and its port is
+# published on 127.0.0.1 only.
+
+[Unit]
+Description=Offline app: Jellyfin
+Documentation=https://github.com/pbassill/offline
+After=network-online.target
+Wants=network-online.target
+
+[Container]
+ContainerName=offline-app-jellyfin
+Image=docker.io/jellyfin/jellyfin:10.11.11@sha256:aefb67e6a7ff1debdd154a78a7bbb780fd0c873d8639210a7f6a2016ad2b35db
+PublishPort=127.0.0.1:18490:8096
+Volume=/srv/offline/apps/jellyfin/config:/config:U
+Volume=/srv/offline/apps/jellyfin/cache:/cache:U
+Volume=/srv/offline/media:/media:ro
+NoNewPrivileges=true
+LogDriver=journald
+PodmanArgs=--pull=never --uidmap=0:2100000:65536 --gidmap=0:2100000:65536 --memory=2g --pids-limit=512
+
+[Service]
+Restart=on-failure
+RestartSec=15
+TimeoutStartSec=300

@@ -1,0 +1,23 @@
+# Offline application: CyberChef
+# Installed, started and removed with "sudo offline apps". The container's root user is
+# mapped to an unprivileged range on the host, it cannot gain privileges, and its port is
+# published on 127.0.0.1 only.
+
+[Unit]
+Description=Offline app: CyberChef
+Documentation=https://github.com/pbassill/offline
+After=network-online.target
+Wants=network-online.target
+
+[Container]
+ContainerName=offline-app-cyberchef
+Image=ghcr.io/gchq/cyberchef:10.24.0@sha256:58d2bcefe3f32b066eafca07353aae31b961ca7765fe4bcb913aba6bb8b8dd81
+PublishPort=127.0.0.1:18100:80
+NoNewPrivileges=true
+LogDriver=journald
+PodmanArgs=--pull=never --uidmap=0:1000000:65536 --gidmap=0:1000000:65536 --memory=128m --pids-limit=512
+
+[Service]
+Restart=on-failure
+RestartSec=15
+TimeoutStartSec=300

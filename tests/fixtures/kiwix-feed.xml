@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/terms/" xmlns:opds="https://specs.opds.io/opds-1.2" xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/">
+  <id>12345</id><title>Filtered Entries</title><updated>2026-11-21T00:00:00Z</updated>
+  <totalResults>4</totalResults><startIndex>0</startIndex><itemsPerPage>4</itemsPerPage>
+  <entry><id>urn:uuid:1</id><title>Wikipedia: medicine</title><updated>2026-10-01T00:00:00Z</updated><summary>Medical articles</summary><language>eng</language><name>wikipedia_en_medicine</name><flavour>maxi</flavour><category>wikipedia</category><tags>wikipedia;_pictures:yes</tags><articleCount>70000</articleCount><mediaCount>90000</mediaCount>
+    <link rel="http://opds-spec.org/image/thumbnail" href="/catalog/v2/illustration/1/?size=48" type="image/png;width=48;height=48;scale=1"/>
+    <link type="text/html" href="/content/wikipedia_en_medicine_maxi_2026-10"/>
+    <link rel="http://opds-spec.org/acquisition/open-access" type="application/x-zim" href="https://download.kiwix.org/zim/wikipedia/wikipedia_en_medicine_maxi_2026-10.zim.meta4" length="1825361920"/></entry>
+  <entry><id>urn:uuid:2</id><title>Wikipedia: medicine</title><updated>2026-06-01T00:00:00Z</updated><summary>Medical articles</summary><language>eng</language><name>wikipedia_en_medicine</name><flavour>maxi</flavour>
+    <link rel="http://opds-spec.org/acquisition/open-access" type="application/x-zim" href="https://download.kiwix.org/zim/wikipedia/wikipedia_en_medicine_maxi_2026-06.zim.meta4" length="1800000000"/></entry>
+  <entry><id>urn:uuid:3</id><title>Wikipedia: medicine (no pics)</title><updated>2026-10-01T00:00:00Z</updated><summary>Medical articles</summary><language>eng</language><name>wikipedia_en_medicine</name><flavour>nopic</flavour>
+    <link rel="http://opds-spec.org/acquisition/open-access" type="application/x-zim" href="https://download.kiwix.org/zim/wikipedia/wikipedia_en_medicine_nopic_2026-10.zim.meta4" length="800000000"/></entry>
+  <entry><id>urn:uuid:4</id><title>Test Wiki &lt;b&gt;</title><updated>2026-09-01T00:00:00Z</updated><summary>x</summary><language>eng</language><name>testwiki_en_all</name><flavour></flavour>
+    <link rel="http://opds-spec.org/acquisition/open-access" type="application/x-zim" href="https://download.kiwix.org/zim/other/testwiki_en_all_2026-09.zim.meta4" length="70000"/></entry>
+  <entry><id>urn:uuid:5</id><title>Evil</title><name>evil_en</name>
+    <link rel="http://opds-spec.org/acquisition/open-access" type="application/x-zim" href="http://evil.example/zim/../../etc/evil_en_2026-01.zim.meta4" length="1"/></entry>
+</feed>

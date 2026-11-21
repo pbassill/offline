@@ -1,0 +1,27 @@
+# Offline application: Translated Library
+# Installed, started and removed with "sudo offline apps". The container's root user is
+# mapped to an unprivileged range on the host, it cannot gain privileges, and its port is
+# published on 127.0.0.1 only.
+
+[Unit]
+Description=Offline app: Translated Library
+Documentation=https://github.com/pbassill/offline
+After=network-online.target
+Wants=network-online.target
+
+[Container]
+ContainerName=offline-app-translate
+Image=ghcr.io/crosstalk-solutions/project-nomad-translate:0.1.2@sha256:8f830d3a596e345c9090b236f63e1c1208f253d19f042be643c79195734bb6fa
+PublishPort=127.0.0.1:18460:8391
+Volume=/srv/offline/apps/translate/models:/models:U
+Environment=KIWIX=http://host.containers.internal:8080
+Environment=TRANSLATE_LANGS=fr,es,de
+Environment=WORKERS=4
+NoNewPrivileges=true
+LogDriver=journald
+PodmanArgs=--pull=never --uidmap=0:2400000:65536 --gidmap=0:2400000:65536 --memory=2g --pids-limit=512
+
+[Service]
+Restart=on-failure
+RestartSec=15
+TimeoutStartSec=300

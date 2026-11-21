@@ -1,0 +1,11 @@
+<?xml version="1.0" standalone="no"?>
+<!DOCTYPE service-group SYSTEM "avahi-service.dtd">
+<!-- Announces this laptop to other Offline laptops on the local network. -->
+<service-group>
+  <name replace-wildcards="yes">Offline library on %h</name>
+  <service>
+    <type>_offline-sync._tcp</type>
+    <port>47001</port>
+    <txt-record>v=2</txt-record>
+  </service>
+</service-group>

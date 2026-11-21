@@ -1,0 +1,37 @@
+[Unit]
+Description=Offline: rebuild the library reader index
+Documentation=https://github.com/pbassill/offline
+
+[Service]
+Type=oneshot
+User=offline
+Group=offline
+ExecStart=/usr/local/bin/offline library
+TimeoutStartSec=30min
+Nice=10
+
+ReadWritePaths=/var/lib/offline /run/offline
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+UMask=0002
+IPAddressDeny=any
+IPAddressAllow=localhost

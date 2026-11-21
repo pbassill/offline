@@ -1,0 +1,97 @@
+# Offline content catalogue.
+# Columns, separated by single tabs: pack, ZIM file base, title, description, approximate size in MiB.
+# The ZIM file base is the Kiwix file name without its _YYYY-MM date and .zim ending.
+# A ZIM may appear in more than one pack. The size is only a guide for planning; the
+# true size and the current edition are read from the live Kiwix catalogue at download
+# time (sudo offline catalogue --check), so this file does not go stale.
+#
+# The wikipedia-*, medicine-*, survival-*, education-*, diy-*, agriculture-* and
+# computing-* packs are the curated collections of Project NOMAD
+# (https://github.com/Crosstalk-Solutions/project-nomad, Apache License 2.0), tier by
+# tier. As in NOMAD, a standard pack assumes its essential pack and a comprehensive
+# pack assumes its standard pack: "sudo offline get medicine-standard" fetches both.
+# Put your own additions in /etc/offline/catalogue.local.tsv using the same layout.
+wikipedia-top-mini	wikipedia_en_top_mini	Wikipedia: Quick Reference	Top 100,000 articles with minimal images. Great for quick lookups.	331
+wikipedia-top-nopic	wikipedia_en_top_nopic	Wikipedia: Popular Articles	Top articles without images. Good balance of content and size.	2239
+wikipedia-all-mini	wikipedia_en_all_mini	Wikipedia: Complete Wikipedia (Compact)	All 6+ million articles in condensed format.	12531
+wikipedia-all-nopic	wikipedia_en_all_nopic	Wikipedia: Complete Wikipedia (No Images)	All articles without images. Comprehensive offline reference.	52690
+wikipedia-all-maxi	wikipedia_en_all_maxi	Wikipedia: Complete Wikipedia (Full)	The complete experience with all images and media.	123980
+medicine-essential	zimgit-medicine_en	Medical Library	Field and emergency medicine books and guides	67
+medicine-essential	nhs.uk_en_medicines	NHS Medicines A to Z	How medicines work, dosages, side effects, and interactions	16
+medicine-essential	irp.fas.org_en_military-medicine	Military Medicine	Tactical and field medicine manuals	62
+medicine-essential	wwwnc.cdc.gov_en_all	CDC Health Information	Disease prevention, travel health, and outbreak information	170
+medicine-standard	medlineplus.gov_en_all	MedlinePlus	NIH's consumer health encyclopedia - diseases, conditions, drugs, supplements	1800
+medicine-comprehensive	wikipedia_en_medicine_maxi	Wikipedia Medicine	Curated medical articles from Wikipedia with images	1778
+medicine-comprehensive	libretexts.org_en_med	LibreTexts Medicine	Open-source medical textbooks and educational content	1100
+medicine-comprehensive	librepathology_en_all_maxi	LibrePathology	Pathology reference for disease identification	95
+survival-essential	zimgit-water_en	Water Treatment Library	Collecting, filtering, and purifying drinking water	20
+survival-essential	zimgit-food-preparation_en	Food for Preppers	Recipes and techniques for preparing and preserving food	97
+survival-essential	zimgit-knots_en	A Library of Knots	Illustrated guides to knots, lashings, ladders, and sutures	27
+survival-essential	canadian-prepper_en_winterprepping	Canadian Prepper: Winter Prepping	Video guides for winter survival and cold weather emergencies	1342
+survival-essential	canadian-prepper_en_bugoutroll	Canadian Prepper: Bug Out Roll	Essential gear selection for your bug-out bag	879
+survival-standard	www.ready.gov_en	Ready.gov	Official US disaster planning guidance - weather, fire, evacuation plans, and emergency kits	2429
+survival-standard	outdoors.stackexchange.com_en_all	The Great Outdoors Q&A	Answered questions on hiking, camping, navigation, and wilderness skills	135
+survival-standard	ham.stackexchange.com_en_all	Amateur Radio Q&A	Answered questions on radio equipment, antennas, licensing, and emergency communications	74
+survival-standard	canadian-prepper_en_bugoutconcepts	Canadian Prepper: Bug Out Concepts	Strategies and planning for emergency evacuation	2886
+survival-standard	urban-prepper_en_all	Urban Prepper	Comprehensive urban emergency preparedness video series	2245
+survival-comprehensive	canadian-prepper_en_preppingfood	Canadian Prepper: Prepping Food	Long-term food storage and survival meal preparation	2160
+survival-comprehensive	zimgit-post-disaster_en	Post Disaster Resource Library	Shelter, sanitation, salvage, and recovery guidance for the aftermath of a disaster	644
+survival-comprehensive	100r.co_en_all	Hundred Rabbits	Field notes on low-tech living - solar power, water, food, and repair from a decade off-grid	172
+survival-comprehensive	gutenberg_en_lcc-u	Project Gutenberg: Military Science	Classic military strategy, tactics, and field manuals	1200
+survival-comprehensive	cd3wdproject.org_en_all	CD3WD: Appropriate Technology Library	Practical guides to food production, water and sanitation, construction, and village-scale manufacturing without industrial supply chains	581
+education-essential	wikibooks_en_all_nopic	Wikibooks	Open-content textbooks covering math, science, computing, and more	3380
+education-standard	ted_mul_ted-ed	TED-Ed	Educational video lessons on science, history, literature, and more	6381
+education-standard	wikiversity_en_all_maxi	Wikiversity	Tutorials, courses, and learning materials for all levels	2012
+education-standard	libretexts.org_en_math	LibreTexts Mathematics	Open-source math textbooks from algebra to calculus	792
+education-standard	libretexts.org_en_phys	LibreTexts Physics	Physics courses and textbooks	534
+education-standard	libretexts.org_en_chem	LibreTexts Chemistry	Chemistry courses and textbooks	2180
+education-standard	libretexts.org_en_bio	LibreTexts Biology	Biology courses and textbooks	2240
+education-comprehensive	wikibooks_en_all_maxi	Wikibooks (With Images)	Open textbooks with full illustrations and diagrams	4520
+education-comprehensive	ted_mul_ted-conference	TED Conference	Main TED conference talks on ideas worth spreading	18136
+education-comprehensive	libretexts.org_en_human	LibreTexts Humanities	Literature, philosophy, history, and social sciences	3730
+education-comprehensive	libretexts.org_en_geo	LibreTexts Geosciences	Earth science, geology, and environmental studies	1127
+education-comprehensive	libretexts.org_en_eng	LibreTexts Engineering	Engineering courses and technical references	678
+education-comprehensive	libretexts.org_en_biz	LibreTexts Business	Business, economics, and management textbooks	801
+diy-essential	woodworking.stackexchange.com_en_all	Woodworking Q&A	Stack Exchange Q&A for carpentry, joinery, and woodcraft	102
+diy-essential	mechanics.stackexchange.com_en_all	Motor Vehicle Maintenance Q&A	Stack Exchange Q&A for car and motorcycle repair	326
+diy-standard	diy.stackexchange.com_en_all	DIY & Home Improvement Q&A	Stack Exchange Q&A for home repairs, electrical, plumbing, and construction	1989
+diy-comprehensive	ifixit_en_all	iFixit Repair Guides	Step-by-step repair guides for electronics, appliances, and vehicles	3380
+agriculture-essential	foss.cooking_en_all	FOSS Cooking	Quick and easy cooking guides and recipes	29
+agriculture-essential	based.cooking_en_all	Based.Cooking	Simple, practical recipes from the community	16
+agriculture-standard	gardening.stackexchange.com_en_all	Gardening Q&A	Stack Exchange Q&A for growing your own food, plant care, and landscaping	890
+agriculture-standard	cooking.stackexchange.com_en_all	Cooking Q&A	Stack Exchange Q&A for cooking techniques, food safety, and recipes	227
+agriculture-standard	zimgit-food-preparation_en	Food for Preppers	Recipes and techniques for food preservation and long-term storage	98
+agriculture-comprehensive	lrnselfreliance_en_all	Learning Self-Reliance: Homesteading	Beekeeping, animal husbandry, and sustainable living practices	3790
+agriculture-comprehensive	gutenberg_en_lcc-s	Project Gutenberg: Agriculture	Classic texts on farming, animal husbandry, plant cultivation, and food preservation	4300
+computing-essential	freecodecamp_en_all	freeCodeCamp	Interactive programming tutorials - JavaScript, algorithms, and data structures	8
+computing-essential	devdocs_en_python	Python Documentation	Complete Python language reference and tutorials	4
+computing-essential	devdocs_en_javascript	JavaScript Documentation	MDN JavaScript reference and guides	3
+computing-essential	devdocs_en_html	HTML Documentation	MDN HTML elements and attributes reference	2
+computing-essential	devdocs_en_css	CSS Documentation	MDN CSS properties and selectors reference	5
+computing-standard	arduino.stackexchange.com_en_all	Arduino Q&A	Stack Exchange Q&A for Arduino microcontroller projects	248
+computing-standard	raspberrypi.stackexchange.com_en_all	Raspberry Pi Q&A	Stack Exchange Q&A for Raspberry Pi projects and troubleshooting	285
+computing-standard	devdocs_en_node	Node.js Documentation	Node.js API reference and guides	1
+computing-standard	devdocs_en_react	React Documentation	React library reference and tutorials	3
+computing-standard	devdocs_en_git	Git Documentation	Git version control reference	2
+computing-comprehensive	electronics.stackexchange.com_en_all	Electronics Q&A	Stack Exchange Q&A for circuit design, components, and electrical engineering	4064
+computing-comprehensive	robotics.stackexchange.com_en_all	Robotics Q&A	Stack Exchange Q&A for robotics projects and automation	232
+computing-comprehensive	devdocs_en_docker	Docker Documentation	Docker container reference and guides	2
+computing-comprehensive	devdocs_en_bash	Linux Documentation	Linux command reference and system administration	1
+medical-extra	mdwiki_en_all_maxi	MDWiki	Clinically reviewed medical encyclopaedia from WikiProject Medicine.	2150
+medical-extra	wikem_en_all_maxi	WikEM	Emergency medicine reference written for clinicians.	357
+reference	wiktionary_en_all_nopic	Wiktionary	English dictionary and thesaurus.	0
+reference	wikivoyage_en_all_maxi	Wikivoyage	Travel guide to places worldwide, useful for regional detail and routes.	0
+reference	wikisource_en_all_nopic	Wikisource	Library of source texts and historical documents.	0
+practical-extra	appropedia_en_all_maxi	Appropedia	Sustainability, appropriate technology and self-reliance projects.	0
+practical-extra	energypedia_en_all_maxi	Energypedia	Renewable and off-grid energy: solar, batteries, cooking.	0
+education-extra	phet_en_all	PhET simulations	Interactive science and mathematics simulations.	0
+education-extra	vikidia_en_all_maxi	Vikidia	Encyclopaedia written for children aged eight to thirteen.	0
+education-extra	crashcourse_en_all	Crash Course	Educational video courses across school subjects. Large.	0
+books	gutenberg_en_all	Project Gutenberg	Tens of thousands of public-domain books in English. Very large.	0
+tech-extra	askubuntu.com_en_all	Ask Ubuntu	Questions and answers on running Ubuntu.	0
+tech-extra	unix.stackexchange.com_en_all	Unix and Linux Q&A	Questions and answers on Linux and the command line.	0
+tech-extra	superuser.com_en_all	Super User	Questions and answers on computer hardware and software.	0
+tech-extra	serverfault.com_en_all	Server Fault	Questions and answers on system and network administration.	0
+tech-extra	security.stackexchange.com_en_all	Information Security Q&A	Questions and answers on security practice.	0
+tech-extra	archlinux_en_all_maxi	Arch Linux wiki	Thorough Linux documentation that applies well beyond Arch.	34
+tech-extra	devdocs_en_php	PHP documentation	The PHP manual from DevDocs.	0

@@ -1,10 +1,11 @@
 [Unit]
-Description=Scan for offline peers every five minutes
+Description=Offline: look for other laptops every five minutes
 
 [Timer]
 OnBootSec=1min
 OnUnitActiveSec=5min
-Persistent=true
+RandomizedDelaySec=30s
+AccuracySec=30s
 Unit=offline-peer-sync.service
 
 [Install]

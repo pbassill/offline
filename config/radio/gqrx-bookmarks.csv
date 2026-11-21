@@ -1,0 +1,31 @@
+# Tag name          ;  color
+PMR446              ; #2e8b57
+Mesh                ; #1e90ff
+Calling             ; #c0c0c0
+Broadcast           ; #daa520
+Untagged            ; #c0c0c0
+
+# Frequency ; Name                     ; Modulation          ;  Bandwidth; Tags
+   446006250; PMR446 channel 1         ; Narrow FM           ;      10000; PMR446
+   446018750; PMR446 channel 2         ; Narrow FM           ;      10000; PMR446
+   446031250; PMR446 channel 3         ; Narrow FM           ;      10000; PMR446
+   446043750; PMR446 channel 4         ; Narrow FM           ;      10000; PMR446
+   446056250; PMR446 channel 5         ; Narrow FM           ;      10000; PMR446
+   446068750; PMR446 channel 6         ; Narrow FM           ;      10000; PMR446
+   446081250; PMR446 channel 7         ; Narrow FM           ;      10000; PMR446
+   446093750; PMR446 channel 8         ; Narrow FM           ;      10000; PMR446
+   446106250; PMR446 channel 9         ; Narrow FM           ;      10000; PMR446
+   446118750; PMR446 channel 10        ; Narrow FM           ;      10000; PMR446
+   446131250; PMR446 channel 11        ; Narrow FM           ;      10000; PMR446
+   446143750; PMR446 channel 12        ; Narrow FM           ;      10000; PMR446
+   446156250; PMR446 channel 13        ; Narrow FM           ;      10000; PMR446
+   446168750; PMR446 channel 14        ; Narrow FM           ;      10000; PMR446
+   446181250; PMR446 channel 15        ; Narrow FM           ;      10000; PMR446
+   446193750; PMR446 channel 16        ; Narrow FM           ;      10000; PMR446
+   869525000; Meshtastic EU868 LongFast; Demod Off           ;     250000; Mesh
+   145500000; 2 m FM calling           ; Narrow FM           ;      10000; Calling
+   433500000; 70 cm FM calling         ; Narrow FM           ;      10000; Calling
+   144800000; APRS (Europe)            ; Narrow FM           ;      10000; Calling
+   145800000; ISS voice downlink       ; Narrow FM           ;      10000; Calling
+   433920000; 433 MHz sensors          ; Demod Off           ;     200000; Untagged
+    98000000; FM broadcast band        ; WFM (stereo)        ;     160000; Broadcast
