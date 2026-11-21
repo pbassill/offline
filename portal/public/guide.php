@@ -121,6 +121,52 @@ offline broadcast</code></pre>
   <p>The last command lists recent broadcasts and shows which systems the most recent one from here reached. A system that was switched off collects what it missed within a minute of waking. The mesh carries about two hundred characters, so keep an urgent message short.</p>
 </section>
 
+<section id="games" aria-labelledby="g-games">
+  <h2 id="g-games">Play</h2>
+  <p>The <a href="/games.php">games page</a> lists what is on this system, the family's Luanti worlds and how to join them, and the activities that run in a tablet's browser.</p>
+  <pre><code>offline games
+sudo offline games install
+sudo offline games host all
+sudo offline games activities</code></pre>
+</section>
+
+<section id="vault" aria-labelledby="g-vault">
+  <h2 id="g-vault">Keep the family's papers</h2>
+  <p>The vault is an encrypted folder for passports, insurance, medical notes and the like. It is created once, on one system, and every other system receives a copy it cannot read. Opening it asks for the passphrase and shows an ordinary folder called <code>Vault</code> in your home folder, for you alone; it closes itself after half an hour without use.</p>
+  <pre><code>offline vault init
+offline vault open
+offline vault close</code></pre>
+  <p>The passphrase is stored nowhere. Write it down and keep it with the papers it protects.</p>
+</section>
+
+<section id="hotspot" aria-labelledby="g-hotspot">
+  <h2 id="g-hotspot">When the router is gone</h2>
+  <p>A system with a Wi-Fi adapter can become the house's network. Telephones and tablets join it and open <code>http://offline.lan/</code>. Devices on the hotspot reach this system and nothing beyond it.</p>
+  <pre><code>sudo offline hotspot on
+sudo offline hotspot show
+sudo offline hotspot off</code></pre>
+</section>
+
+<section id="rebuild" aria-labelledby="g-rebuild">
+  <h2 id="g-rebuild">Rebuild a system, or move content by disc</h2>
+  <p>A home server keeps Ubuntu's packages and an installer image, so that a replacement system can be set up with no internet: install Ubuntu from the image, then run the installer with <code>--apt-cache SERVER</code>.</p>
+  <pre><code>sudo offline rebuild warm
+sudo offline rebuild image
+offline rebuild status --verify</code></pre>
+  <p>Shared content can be copied to a disc and brought in elsewhere. What comes in from a disc passes the same checks as content from another system.</p>
+  <pre><code>sudo offline export /media/you/DISC/offline
+sudo offline import /media/you/DISC/offline</code></pre>
+</section>
+
+<section id="directions" aria-labelledby="g-directions">
+  <h2 id="g-directions">Find places and routes</h2>
+  <p>The <a href="/maps.php">map page</a> finds towns, UK postcodes and coordinates once the place index is fetched, and gives directions by car, bicycle or on foot once a routing graph is built. Both are worked out on this system.</p>
+  <pre><code>sudo offline maps places
+sudo offline maps routing build uk
+sudo offline maps routing on
+offline maps find penryn</code></pre>
+</section>
+
 <section id="power" aria-labelledby="g-power">
   <h2 id="g-power">Save power</h2>
   <pre><code>offline power

@@ -1,0 +1,10 @@
+# Games and learning programs installed on workstations.
+# Columns, separated by single tabs: id, package names to try in order (comma separated),
+# program names to look for (comma separated), title, who it suits, description.
+# All come from Ubuntu's own archive. Add your own in /etc/offline/games.local.tsv.
+luanti	luanti,minetest	luanti,minetest	Luanti	6 and up	Block-building sandbox in the style of Minecraft. Joins the family worlds, or plays alone.
+gcompris	gcompris-qt	gcompris-qt	GCompris	2 to 10	More than a hundred activities: letters, numbers, clocks, money, science, chess and puzzles.
+tuxpaint	tuxpaint	tuxpaint	Tux Paint	3 to 12	Drawing and painting with stamps, shapes and effects.
+tuxmath	tuxmath	tuxmath	Tux, of Math Command	6 to 12	Arithmetic practice as an arcade game.
+tuxtype	tuxtype	tuxtype	Tux Typing	6 and up	Learning to type by catching falling letters and words.
+supertuxkart	supertuxkart	supertuxkart	SuperTuxKart	6 and up	Kart racing, alone, on a split screen, or against each other over the home network.

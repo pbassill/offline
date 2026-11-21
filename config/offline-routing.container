@@ -1,0 +1,32 @@
+# Offline directions: the Valhalla routing engine, answering from the graph in
+# /srv/offline/maps/routing. Installed and removed with "sudo offline maps routing".
+# It runs in its own range of host accounts, holds no capabilities, cannot gain
+# privileges, sees a read-only system and a read-only graph, and listens on this
+# system alone; the portal passes route requests to it.
+
+[Unit]
+Description=Offline directions (Valhalla)
+Documentation=https://github.com/pbassill/offline
+After=network.target
+ConditionPathExists=/srv/offline/maps/routing/graph.tar
+
+[Container]
+ContainerName=offline-routing
+Image=ghcr.io/valhalla/valhalla:3.9.3@sha256:cf618ccafdead96829282acc81a70aa00947c2f28ddcf118f0194acf2fbc7e9d
+PublishPort=127.0.0.1:18700:8002
+Volume=/srv/offline/maps/routing:/data:ro
+Exec=/bin/bash -c 'valhalla_build_config --mjolnir-tile-extract /data/graph.tar --mjolnir-tile-dir /tmp/tiles --httpd-service-listen "tcp://*:8002" --service-limits-auto-max-distance 2000000 --service-limits-bicycle-max-distance 500000 --service-limits-pedestrian-max-distance 150000 > /tmp/valhalla.json && exec valhalla_service /tmp/valhalla.json 2'
+NoNewPrivileges=true
+DropCapability=all
+ReadOnly=true
+Tmpfs=/tmp
+LogDriver=journald
+PodmanArgs=--pull=never --uidmap=0:3000000:65536 --gidmap=0:3000000:65536 --memory=3g --pids-limit=256
+
+[Service]
+Restart=on-failure
+RestartSec=15
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target

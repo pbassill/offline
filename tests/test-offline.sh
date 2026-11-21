@@ -124,6 +124,53 @@ else
   note "Podman not installed: application units not validated by its generator"
 fi
 
+# Family worlds and the routing engine: confined like the applications, and more.
+for unit in "$ROOT"/games/*.container "$ROOT/config/offline-routing.container"; do
+  name="$(basename "$unit" .container)"
+  check "$name is pinned by image digest" grep -Eq '^Image=[a-z0-9./-]+:[A-Za-z0-9._-]+@sha256:[0-9a-f]{64}$' "$unit"
+  check "$name cannot gain privileges" grep -q '^NoNewPrivileges=true$' "$unit"
+  check "$name holds no capabilities" grep -q '^DropCapability=all$' "$unit"
+  check "$name sees a read-only system" grep -q '^ReadOnly=true$' "$unit"
+  check "$name runs in its own user namespace" grep -Eq '^PodmanArgs=.*--uidmap=0:[1-9][0-9]{6}:65536 --gidmap=0:[1-9][0-9]{6}:65536' "$unit"
+  check "$name never pulls an image by itself" grep -q -- '--pull=never' "$unit"
+  check "$name has a memory limit" grep -Eq -- '--memory=[0-9]+[mg] ' "$unit"
+done
+check "the routing engine listens on this system only" grep -q '^PublishPort=127\.0\.0\.1:18700:8002$' "$ROOT/config/offline-routing.container"
+check "the routing engine reads its graph read-only" grep -q '^Volume=/srv/offline/maps/routing:/data:ro$' "$ROOT/config/offline-routing.container"
+for unit in "$ROOT"/games/*.container; do
+  check "$(basename "$unit" .container) answers private addresses only, whatever the firewall says" bash -c "grep -q '^IPAddressDeny=any$' '$unit' && grep -q '^IPAddressAllow=localhost 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 169.254.0.0/16$' '$unit'"
+done
+check "a family world mounts its game read-only" grep -q 'games/mineclonia:ro$' "$ROOT/games/offline-game-creative.container"
+check "no two containers share a user range" bash -c "[[ \$( { grep -oh 'uidmap=0:[0-9]*' '$ROOT'/apps/*.container '$ROOT'/games/*.container '$ROOT/config/offline-routing.container' | cut -d: -f2; grep -oh 'ZIMIT_UID_BASE = [0-9]*' '$ROOT/lib/server.php' | grep -o '[0-9]\+\$'; } | sort | uniq -d | wc -l) -eq 0 ]]"
+check "the routing graph is built in the range that serves it" bash -c "grep -q \"uidmap=0:\$(grep -oh 'ROUTING_UID_BASE = [0-9]*' '$ROOT/lib/maps.php' | grep -o '[0-9]\+\$'):65536\" '$ROOT/config/offline-routing.container'"
+check "the creative world cannot hurt anyone" bash -c "grep -q '^enable_damage = false' '$ROOT/games/creative.conf' && grep -q '^enable_pvp = false' '$ROOT/games/creative.conf'"
+check "the survival world has no monsters and no fighting" bash -c "grep -q '^only_peaceful_mobs = true' '$ROOT/games/survival.conf' && grep -q '^enable_pvp = false' '$ROOT/games/survival.conf'"
+for world in creative survival; do
+  check "the $world world is never announced publicly" grep -q '^server_announce = false' "$ROOT/games/$world.conf"
+  check "the $world world requires a password" grep -q '^disallow_empty_password = true' "$ROOT/games/$world.conf"
+  check "the $world world keeps mods sandboxed" grep -q '^secure.enable_security = true' "$ROOT/games/$world.conf"
+done
+if [[ -x /usr/libexec/podman/quadlet ]]; then
+  QUADLET_GAMES="$(mktemp -d "$WORK/quadlet-games.XXXXXX")"
+  cp "$ROOT"/games/*.container "$ROOT/config/offline-routing.container" "$QUADLET_GAMES/"
+  refute "Podman accepts the world and routing units" bash -c "QUADLET_UNIT_DIRS='$QUADLET_GAMES' /usr/libexec/podman/quadlet -dryrun 2>&1 | grep -Eiq 'unsupported|converting|error'"
+fi
+check "directions pass through the portal only when switched on" grep -q '<IfDefine OFFLINE_ROUTING>' "$ROOT/config/apache-offline-portal.conf"
+check "the portal passes on route requests and nothing else" bash -c "[[ \$(grep -c 'ProxyPass ' '$ROOT/config/apache-offline-portal.conf') -eq 1 ]] && grep -q 'ProxyPass /valhalla/route http://127.0.0.1:18700/route' '$ROOT/config/apache-offline-portal.conf'"
+check "the vault module is read-only like the rest" bash -c "sed -n '/^\\[vault\\]/,/^\\[broadcasts\\]/p' '$ROOT/config/rsyncd.conf' | grep -vq 'read only = no'"
+check "the installer installs the PHP text functions the commands use" grep -q 'php-mbstring' "$ROOT/install.sh"
+# Every package the installer asks apt for must be in the list that fills the package cache.
+MISSING_PACKAGES="$(grep -E '^[[:space:]]*(must|step) .*apt_install |^[[:space:]]+apt_install ' "$ROOT/install.sh" | sed 's/.*apt_install //' | tr ' ' '\n' |
+  grep -E '^[a-z0-9][a-z0-9.+-]+$' | sort -u | while read -r package; do grep -qx "$package" "$ROOT/config/packages.list" || echo "$package"; done)"
+check "the package cache list covers what the installer installs" test -z "$MISSING_PACKAGES"
+for package in $(cut -f2 "$ROOT/games/games.tsv" | grep -v '^#' | tr ',' ' '); do
+  check "the package cache list covers the game package $package" grep -qx "$package" "$ROOT/config/packages.list"
+done
+if have shellcheck; then
+  check "the package cache detector passes shellcheck" shellcheck "$ROOT/config/apt-proxy-detect"
+fi
+check "with no cache listed, apt is told to go direct" bash -c "[[ \$(bash '$ROOT/config/apt-proxy-detect') == DIRECT || -r /etc/offline/apt-cache.hosts ]]"
+
 # Keyed, encrypted sharing; servers; family broadcast.
 check "the sharing daemon listens on this machine only" grep -q '^address = 127.0.0.1' "$ROOT/config/rsyncd.conf"
 check "the network listener demands a pre-shared key" grep -q '^ciphers = PSK' "$ROOT/config/stunnel.conf"
@@ -184,15 +231,19 @@ make_root() {
   mkdir -p "$1"/etc/offline "$1"/usr/local/lib/offline "$1"/srv/offline/knowledge/zim \
     "$1"/srv/offline/media/movies "$1"/srv/offline/media/music "$1"/var/lib/offline "$1"/run/offline \
     "$1"/var/lib/offline/broadcasts "$1"/var/lib/offline/inbox "$1"/var/lib/offline/outbox "$1"/srv/offline/staging \
+    "$1"/srv/offline/vault "$1"/usr/games \
     "$1"/srv/offline/maps "$1"/srv/offline/radio "$1"/srv/offline/apps "$1"/sys/class/power_supply/BAT0 \
     "$1"/sys/bus/usb/devices/1-1 "$1"/sys/bus/usb/devices/1-2
   cp "$ROOT/config/catalogue.tsv" "$ROOT/config/maps.tsv" "$ROOT/config/sites.tsv" "$1/usr/local/lib/offline/"
-  cp -r "$ROOT/apps" "$ROOT/data" "$1/usr/local/lib/offline/"
+  cp -r "$ROOT/apps" "$ROOT/data" "$ROOT/games" "$1/usr/local/lib/offline/"
+  cp "$ROOT/config/packages.list" "$ROOT/config/offline-routing.container" "$1/usr/local/lib/offline/"
   echo 0bda >"$1/sys/bus/usb/devices/1-1/idVendor"; echo 2838 >"$1/sys/bus/usb/devices/1-1/idProduct"
   echo 10c4 >"$1/sys/bus/usb/devices/1-2/idVendor"; echo ea60 >"$1/sys/bus/usb/devices/1-2/idProduct"
   cp "$ROOT/config/offline.conf" "$1/etc/offline/"
   # The scratch machines have a mesh node "plugged in"; keep the real radio command out of most checks.
-  sed -i 's/^MESH_GATEWAY=.*/MESH_GATEWAY=no/' "$1/etc/offline/offline.conf"
+  # The free-space floors are switched off, so that results do not depend on how full this machine is;
+  # the rule itself has its own check further down.
+  sed -i 's/^MESH_GATEWAY=.*/MESH_GATEWAY=no/; s/^SYNC_MIN_FREE_GB=.*/SYNC_MIN_FREE_GB=0/; s/^DOWNLOAD_MIN_FREE_GB=.*/DOWNLOAD_MIN_FREE_GB=0/' "$1/etc/offline/offline.conf"
   echo Battery >"$1/sys/class/power_supply/BAT0/type"
   echo 84 >"$1/sys/class/power_supply/BAT0/capacity"
   echo Discharging >"$1/sys/class/power_supply/BAT0/status"
@@ -320,6 +371,199 @@ check "a link in staging is never published" bash -c "! find '$A/srv/offline/med
 check "the item is recorded as published" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' queue | grep -q 'published'"
 check "a queued item can be removed" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' queue remove '$QID' && ! grep -q '$QID' '$A/var/lib/offline/queue.json' && [[ ! -e '$A/srv/offline/staging/$QID' ]]"
 check "status reports the role and the queue" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' status --json | php -r '\$s = json_decode(stream_get_contents(STDIN), true); exit(\$s[\"role\"] === \"workstation\" && \$s[\"queue\"][\"total\"] === 3 ? 0 : 1);'"
+
+echo
+echo "Games"
+check "the games are listed" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' games | grep -q 'SuperTuxKart'"
+touch "$A/usr/games/gcompris-qt" && chmod 755 "$A/usr/games/gcompris-qt"
+check "an installed game is recognised" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' games | grep -Eq 'GCompris +2 to 10 +installed'"
+printf '#!/bin/sh\necho "Minetest 5.6.1 (Linux)"\n' >"$A/usr/games/minetest" && chmod 755 "$A/usr/games/minetest"
+check "a Luanti too old for the game is pointed out" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' games | grep -q 'Luanti 5.6.1 is installed here, and Mineclonia .* is written for 5.10 or newer'"
+check "the health check says so too" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' doctor | grep -q 'Luanti 5.6.1 is installed here'"
+printf '#!/bin/sh\necho "Luanti 5.10.0 (Linux)"\n' >"$A/usr/games/luanti" && chmod 755 "$A/usr/games/luanti"
+refute "a new enough Luanti draws no remark" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' games | grep -q 'is installed here'"
+# Stand in for the pinned fetches, so that the suite needs no network.
+mkdir -p "$A/usr/local/share/offline/luanti/games/mineclonia" "$A/usr/local/share/offline/sugarizer/js"
+printf 'title = Mineclonia\nmin_minetest_version = 5.12\n' >"$A/usr/local/share/offline/luanti/games/mineclonia/game.conf"
+check "what the game itself asks for is what counts" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' games | grep -q 'Luanti 5.10.0 is installed here, and Mineclonia .* is written for 5.12 or newer'"
+echo 'title = Mineclonia' >"$A/usr/local/share/offline/luanti/games/mineclonia/game.conf"
+check "a family world can be hosted" offline games host creative
+check "the world's unit starts at boot" grep -q '^WantedBy=multi-user.target' "$A/etc/containers/systemd/offline-game-creative.container"
+check "the world's settings are installed" grep -q '^creative_mode = true' "$A/etc/offline/games/creative.conf"
+echo '# my own change' >>"$A/etc/offline/games/creative.conf"
+check "hosting again keeps edited settings" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' games host creative >/dev/null && grep -q 'my own change' '$A/etc/offline/games/creative.conf' && test -f '$A/etc/offline/games/creative.conf.dist'"
+check "the hosted world is reported" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' status --json | php -r '\$s = json_decode(stream_get_contents(STDIN), true); exit(\$s[\"games\"][\"worlds\"][0][\"hosted\"] === true && \$s[\"games\"][\"mineclonia\"] !== null ? 0 : 1);'"
+refute "an unknown world is refused" offline games host nether
+refute "an unknown game is refused" offline games install doom
+check "a world can be withdrawn, keeping what was built" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' games unhost creative | grep -q 'kept in' && [[ ! -e '$A/etc/containers/systemd/offline-game-creative.container' && -d '$A/srv/offline/apps/luanti/creative' ]]"
+SUGARIZER_COMMIT="$(sed -n "s/^const SUGARIZER_COMMIT = '\([0-9a-f]\{40\}\)';$/\1/p" "$ROOT/lib/games.php")"
+echo "$SUGARIZER_COMMIT" >"$A/usr/local/share/offline/sugarizer/.offline-commit"
+echo '<html></html>' >"$A/usr/local/share/offline/sugarizer/index.html"
+check "the browser activities get a site of their own" offline games activities
+check "the activities site answers GET and HEAD only" grep -q 'AllowMethods GET HEAD' "$A/etc/apache2/sites-available/offline-activities.conf"
+check "the activities site may load nothing from elsewhere" grep -q "default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob:; connect-src 'self'" "$A/etc/apache2/sites-available/offline-activities.conf"
+check "the activities site follows the home-network rule" grep -q 'Require ip 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16' "$A/etc/apache2/sites-available/offline-activities.conf"
+check "pinned sources are full commit hashes" bash -c "[[ \$(grep -cE \"^const (MINECLONIA|SUGARIZER)_COMMIT = '[0-9a-f]{40}';\" '$ROOT/lib/games.php') -eq 2 ]]"
+
+echo
+echo "Hotspot and time"
+check "the hotspot reports that it is not set up" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' hotspot | grep -q 'not set up'"
+check "the hotspot can be set up" offline hotspot on --interface wlp2s0 --ssid 'Family Offline'
+HOTSPOT="$A/etc/NetworkManager/system-connections/offline-hotspot.nmconnection"
+check "its profile is private" bash -c "[[ \$(stat -c %a '$HOTSPOT') == 600 ]]"
+check "it uses WPA2 with AES" bash -c "grep -q '^key-mgmt=wpa-psk' '$HOTSPOT' && grep -q '^pairwise=ccmp;' '$HOTSPOT' && grep -q '^proto=rsn;' '$HOTSPOT'"
+check "push-button pairing is off" grep -q '^wps-method=1' "$HOTSPOT"
+check "its passphrase is generated, four groups of four" grep -Eq '^psk=([a-z2-9]{4}-){3}[a-z2-9]{4}$' "$HOTSPOT"
+PASSPHRASE="$(sed -n 's/^psk=//p' "$HOTSPOT")"
+check "its name service answers nothing about the outside" grep -q '^no-resolv' "$A/etc/NetworkManager/dnsmasq-shared.d/offline.conf"
+check "its name service knows this system" grep -q '^address=/offline.lan/10.42.0.1' "$A/etc/NetworkManager/dnsmasq-shared.d/offline.conf"
+check "the passphrase can be shown again" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' hotspot show | grep -q '$PASSPHRASE'"
+check "turning it off keeps it for next time" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' hotspot off >/dev/null && grep -q '^autoconnect=false' '$HOTSPOT'"
+check "turning it on again keeps the same passphrase" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' hotspot on >/dev/null && grep -q '^psk=$PASSPHRASE' '$HOTSPOT' && grep -q '^ssid=Family Offline' '$HOTSPOT'"
+refute "an interface name with shell characters is refused" offline hotspot on --interface 'wl;id'
+refute "a network name with quotes is refused" offline hotspot on --interface wlan0 --ssid 'a"b'
+refute "a channel outside the band is refused" offline hotspot on --interface wlan0 --band a --channel 6
+check "the hotspot can be removed" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' hotspot remove >/dev/null && [[ ! -e '$HOTSPOT' ]]"
+if have nmcli && nmcli --offline connection add type wifi ifname wlp2s0 con-name x ssid y >/dev/null 2>&1; then
+  offline hotspot on --interface wlp2s0 --ssid Check >/dev/null
+  nmcli --offline connection add type wifi ifname wlp2s0 con-name offline-hotspot autoconnect yes ssid Check mode ap 802-11-wireless.band bg \
+    802-11-wireless.channel 6 wifi-sec.key-mgmt wpa-psk wifi-sec.proto rsn wifi-sec.pairwise ccmp wifi-sec.group ccmp wifi-sec.pmf 2 \
+    wifi-sec.wps-method 1 wifi-sec.psk "$(sed -n 's/^psk=//p' "$HOTSPOT")" ipv4.method shared ipv4.addresses 10.42.0.1/24 ipv6.method disabled 2>/dev/null |
+    grep -Ev '^(uuid=|addr-gen-mode=|\[proxy\]|$)' | sort >"$WORK/nm-reference.txt"
+  check "the profile matches what NetworkManager itself would write" bash -c "grep -Ev '^(#|autoconnect=|\$)' '$HOTSPOT' | sort | diff - '$WORK/nm-reference.txt'"
+  offline hotspot remove >/dev/null
+else
+  note "NetworkManager not installed: hotspot profile not compared with its own generator"
+fi
+
+sed -i 's/^SERVERS=.*/SERVERS="192.168.7.10 198.51.100.7"/' "$A/etc/offline/offline.conf"
+check "only a server on a private network is asked the time" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' time sources | grep -q 'asks 192.168.7.10 for the time' && ! grep -rq '198.51.100.7' '$A/etc/systemd/timesyncd.conf.d'"
+check "the usual time server stays as the fallback" grep -q '^NTP=192.168.7.10 ntp.ubuntu.com' "$A/etc/systemd/timesyncd.conf.d/offline.conf"
+mkdir -p "$A/etc/chrony"
+check "with chrony present its own source list is used" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' time sources >/dev/null && grep -q '^server 192.168.7.10 iburst' '$A/etc/chrony/sources.d/offline.sources' && [[ ! -e '$A/etc/systemd/timesyncd.conf.d/offline.conf' ]]"
+check "a home server can serve time" offline time serve on
+check "it serves private networks and keeps going without the internet" bash -c "grep -q '^allow 192.168.0.0/16' '$A/etc/chrony/conf.d/offline-server.conf' && grep -q '^local stratum 10 orphan' '$A/etc/chrony/conf.d/offline-server.conf'"
+refute "it serves no public range" grep -Eq '^allow (0\.0\.0\.0|all|::)' "$A/etc/chrony/conf.d/offline-server.conf"
+if have chronyd; then
+  check "chrony accepts the time service settings" bash -c "chronyd -p -f '$A/etc/chrony/conf.d/offline-server.conf' | grep -q 'local stratum 10 orphan'"
+fi
+check "the same private servers are tried for packages" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' rebuild clients >/dev/null && grep -qx '192.168.7.10' '$A/etc/offline/apt-cache.hosts' && ! grep -q '198.51.100.7' '$A/etc/offline/apt-cache.hosts'"
+check "apt is told to ask the detector, not given a fixed proxy" bash -c "grep -q 'Proxy-Auto-Detect \"/usr/local/lib/offline/apt-proxy-detect\"' '$A/etc/apt/apt.conf.d/02offline-cache' && ! grep -q 'Acquire::http::Proxy \"' '$A/etc/apt/apt.conf.d/02offline-cache'"
+sed -i 's/^SYNC_EXPOSE=.*/SYNC_EXPOSE=internet/' "$A/etc/offline/offline.conf"
+refute "a server facing the internet serves no time" offline time serve on
+refute "a server facing the internet hosts no world" offline games host creative
+refute "a server facing the internet serves no tablet activities" offline games activities
+refute "a server facing the internet raises no hotspot" offline hotspot on --interface wlp2s0
+refute "a server facing the internet serves no package cache" offline rebuild cache on
+sed -i 's/^SYNC_EXPOSE=.*/SYNC_EXPOSE=lan/; s/^SERVERS=.*/SERVERS=""/' "$A/etc/offline/offline.conf"
+offline time sources >/dev/null
+offline rebuild clients >/dev/null
+check "with no household server, apt is left alone" test ! -e "$A/etc/apt/apt.conf.d/02offline-cache"
+
+echo
+echo "Rebuilding"
+check "the package cache can be switched on" offline rebuild cache on
+ACNG="$A/etc/apt-cacher-ng/zz_offline.conf"
+check "the cache serves package archives only" grep -q '^ForceManaged: 1' "$ACNG"
+check "the cache knows Ubuntu's security archive" grep -q '^Remap-ubusec: security.ubuntu.com' "$ACNG"
+check "its maintenance pages need a sign-in" bash -c "grep -Eq '^AdminAuth: offline:[0-9a-f]{32}$' '$A/etc/apt-cacher-ng/zz_offline_security.conf' && [[ \$(stat -c %a '$A/etc/apt-cacher-ng/zz_offline_security.conf') == 640 ]]"
+check "the cache can be told to stand alone" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' rebuild offline on >/dev/null && grep -q '^Offlinemode: 1' '$ACNG' && OFFLINE_PREFIX='$A' '$ROOT/bin/offline' rebuild | grep -q 'offline (answers from what it holds)'"
+check "and to fetch again" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' rebuild offline off >/dev/null && grep -q '^Offlinemode: 0' '$ACNG'"
+printf '%064d *ubuntu-24.04.1-desktop-amd64.iso\n%064d *ubuntu-24.04.3-desktop-amd64.iso\n%064d *ubuntu-24.04.3-live-server-amd64.iso\n%064d *ubuntu-24.04.10-desktop-amd64.iso\n%064d *ubuntu-24.04.3-desktop-arm64.iso\n' 1 2 3 4 5 >"$WORK/SHA256SUMS"
+# shellcheck disable=SC2016
+check "the newest image of the kind asked for is chosen" php -r 'require $argv[1] . "/lib/cli.php"; $i = Offline\ubuntu_pick_image(file_get_contents($argv[2]), "24.04", "desktop", "amd64"); exit($i !== null && $i[0] === "ubuntu-24.04.10-desktop-amd64.iso" && $i[1] === str_pad("4", 64, "0", STR_PAD_LEFT) ? 0 : 1);' "$ROOT" "$WORK/SHA256SUMS"
+# shellcheck disable=SC2016
+check "an image for another release is not chosen" php -r 'require $argv[1] . "/lib/cli.php"; exit(Offline\ubuntu_pick_image(file_get_contents($argv[2]), "26.04", "desktop", "amd64") === null ? 0 : 1);' "$ROOT" "$WORK/SHA256SUMS"
+echo 'not a signature' >"$WORK/SHA256SUMS.gpg"
+# shellcheck disable=SC2016
+check "a checksum list Ubuntu did not sign is refused" php -r 'require $argv[1] . "/lib/cli.php"; exit(Offline\ubuntu_signature_ok($argv[2], $argv[2] . ".gpg") ? 1 : 0);' "$ROOT" "$WORK/SHA256SUMS" 2>/dev/null
+
+echo
+echo "Family vault"
+# shellcheck disable=SC2016
+check "names gocryptfs writes are accepted" php -r 'require $argv[1] . "/lib/cli.php"; foreach (["gocryptfs.conf", "gocryptfs.diriv", "g3GNyP2FoBqq4W1P0F6RRQ", "g3GNyP2FoBqq4W1P0F6RRQ/RjfMfcAyNtvHKK_u04H8Hg", "H4gU-TQ/gocryptfs.diriv", "gocryptfs.longname.dHvBkLuCUGBRfDr9oSd3X5MjWGnbnyD0mfQAkV6xHj8", "gocryptfs.longname.dHvBkLuCUGBRfDr9oSd3X5MjWGnbnyD0mfQAkV6xHj8.name"] as $p) { if (!Offline\vault_path_ok($p)) { fwrite(STDERR, $p); exit(1); } } exit(0);' "$ROOT"
+# shellcheck disable=SC2016
+check "anything else is not" php -r 'require $argv[1] . "/lib/cli.php"; foreach (["", "/etc/passwd", "../x", "a/../b", ".hidden", "notes.txt", "run.sh", "a/gocryptfs.conf", "gocryptfs.conf/x", "a b", "a\nb", "gocryptfs.longname.short"] as $p) { if (Offline\vault_path_ok($p)) { fwrite(STDERR, $p); exit(1); } } exit(0);' "$ROOT"
+check "a system with no vault says how to make one" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' vault | grep -q 'offline vault init'"
+refute "a passphrase file others can read is refused" bash -c "echo secret >'$WORK/loose.pass'; chmod 644 '$WORK/loose.pass'; OFFLINE_PREFIX='$A' '$ROOT/bin/offline' vault init --passfile '$WORK/loose.pass'"
+if have gocryptfs; then
+  printf 'correct horse battery staple\n' >"$WORK/vault.pass"
+  chmod 600 "$WORK/vault.pass"
+  check "the vault can be created" offline vault init --passfile "$WORK/vault.pass"
+  check "its key file is readable by the sharing group and nobody else" bash -c "[[ \$(stat -c %a '$A/srv/offline/vault/gocryptfs.conf') == 440 ]]"
+  refute "the key file does not hold the passphrase" grep -q 'correct horse' "$A/srv/offline/vault/gocryptfs.conf"
+  refute "a second vault cannot be created over the first" offline vault init --passfile "$WORK/vault.pass"
+  if [[ -w /dev/fuse ]] && (have fusermount3 || have fusermount); then
+    mkdir -p "$WORK/vaulthome"
+    vault() { HOME="$WORK/vaulthome" OFFLINE_PREFIX="$A" "$ROOT/bin/offline" vault "$@"; }
+    check "the vault opens with its passphrase" vault open --passfile "$WORK/vault.pass"
+    if mountpoint -q "$WORK/vaulthome/Vault"; then
+      mkdir -p "$WORK/vaulthome/Vault/Passports"
+      echo 'Passport number 123456789' >"$WORK/vaulthome/Vault/Passports/peter.txt"
+      check "a document can be saved in it" grep -q 123456789 "$WORK/vaulthome/Vault/Passports/peter.txt"
+      refute "nothing readable reaches the disc" grep -rq -e 123456789 -e Passports -e peter "$A/srv/offline/vault"
+      check "the vault reports that it is open" bash -c "HOME='$WORK/vaulthome' OFFLINE_PREFIX='$A' '$ROOT/bin/offline' vault | grep -q 'It is open at'"
+      check "the vault closes" vault close
+      refute "closed, the documents are gone from view" test -e "$WORK/vaulthome/Vault/Passports/peter.txt"
+      echo wrong >"$WORK/wrong.pass"; chmod 600 "$WORK/wrong.pass"
+      refute "the wrong passphrase opens nothing" vault open --passfile "$WORK/wrong.pass"
+      refute "and leaves nothing mounted" mountpoint -q "$WORK/vaulthome/Vault"
+    else
+      fail "the vault is mounted after opening"
+    fi
+  else
+    note "FUSE is not available here: opening the vault not exercised"
+  fi
+else
+  note "gocryptfs not installed: vault creation not exercised"
+fi
+
+echo
+echo "Place search and directions"
+mkdir -p "$WORK/geo"
+# shellcheck disable=SC2016
+php -r '
+$d = $argv[1];
+$row = fn($id, $name, $ascii, $lat, $lon, $class, $code, $cc, $adm, $pop) => implode("\t", [$id, $name, $ascii, "", $lat, $lon, $class, $code, $cc, "", $adm, "", "", "", $pop, "", "", "Europe/London", "2026-01-01"]) . "\n";
+file_put_contents("$d/cities500.txt",
+    $row(1, "Penryn", "Penryn", 50.16913, -5.10709, "P", "PPL", "GB", "ENG", 7166) . $row(2, "Falmouth", "Falmouth", 50.15441, -5.07113, "P", "PPL", "GB", "ENG", 21635)
+    . $row(3, "Falmouth", "Falmouth", 41.55149, -70.61475, "P", "PPL", "US", "MA", 31531) . $row(4, "Zürich", "Zurich", 47.36667, 8.55, "P", "PPLA", "CH", "ZH", 341730)
+    . $row(5, "Evil\t<script>alert(1)</script>", "Evil", 1, 1, "P", "PPL", "GB", "ENG", 5) . $row(6, "Nowhere", "Nowhere", 123.0, 0, "P", "PPL", "GB", "ENG", 5)
+    . $row(7, "<b>Bold</b> Town", "Bold Town", 51, -1, "P", "PPL", "GB", "ENG", 9));
+file_put_contents("$d/GB.txt", $row(1, "Penryn", "Penryn", 50.16913, -5.10709, "P", "PPL", "GB", "ENG", 7166) . $row(8, "Carn Brea", "Carn Brea", 50.2226, -5.2473, "T", "HLL", "GB", "ENG", 0)
+    . $row(9, "Some Farm", "Some Farm", 50.1, -5.1, "S", "FRM", "GB", "ENG", 0) . $row(10, "Treliske Hospital", "Treliske Hospital", 50.266, -5.092, "S", "HSP", "GB", "ENG", 0));
+file_put_contents("$d/admin1CodesASCII.txt", "GB.ENG\tEngland\tEngland\t1\nUS.MA\tMassachusetts\tMassachusetts\t2\n");
+file_put_contents("$d/countryInfo.txt", "# comment\nGB\tGBR\t826\tUK\tUnited Kingdom\tLondon\nUS\tUSA\t840\tUS\tUnited States\tWashington\nCH\tCHE\t756\tSZ\tSwitzerland\tBern\n");
+$pc = fn($code, $place, $lat, $lon) => implode("\t", ["GB", $code, $place, "England", "ENG", "Cornwall", "", "", "", $lat, $lon, "6"]) . "\n";
+file_put_contents("$d/GB_full.txt", $pc("TR10 8AB", "Penryn", 50.1690, -5.1070) . $pc("TR10 8AD", "Penryn", 50.1695, -5.1080) . $pc("SW1A 1AA", "London", 51.5010, -0.1416) . $pc("../../etc", "X", 1, 1) . $pc("TR1 1AA", "Truro", "x", -5.05));
+' "$WORK/geo"
+if have unzip && have python3; then
+  (cd "$WORK/geo" && python3 -m zipfile -c cities500.zip cities500.txt && python3 -m zipfile -c GB.zip GB.txt && python3 -m zipfile -c GB_full.csv.zip GB_full.txt && rm cities500.txt GB.txt GB_full.txt)
+  check "the place index is built from GeoNames files" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' maps places --from '$WORK/geo' | grep -q '7 places and 3 UK postcodes'"
+  find_place() { OFFLINE_PREFIX="$A" "$ROOT/bin/offline" maps find "$@"; }
+  check "a town is found by name" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' maps find penryn | grep -q 'Penryn .*England, United Kingdom .*50.16913'"
+  check "a name is found without its accents" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' maps find zurich | grep -q 'Zürich'"
+  check "the beginning of a name is enough" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' maps find falm | grep -c Falmouth | grep -qx 2"
+  check "a UK postcode is found, spaced or not" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' maps find tr108ab | grep -q 'TR10 8AB .*Penryn, postcode'"
+  check "part of a postcode lists those that match" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' maps find 'TR10' | grep -c postcode | grep -qx 2"
+  check "coordinates are recognised" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' maps find '50.169, -5.107' | grep -q Coordinates"
+  check "hills and hospitals in Britain are indexed" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' maps find carn | grep -q 'Carn Brea' && OFFLINE_PREFIX='$A' '$ROOT/bin/offline' maps find treliske | grep -q Hospital"
+  refute "farms and the like are not" find_place farm
+  refute "a row with an impossible position is dropped" grep -q Nowhere "$A/srv/offline/maps/places/names.tsv"
+  refute "a row that breaks the column layout is dropped" grep -q 'alert(1)' "$A/srv/offline/maps/places/names.tsv"
+  check "a postcode that is not one creates no file" bash -c "[[ \$(find '$A/srv/offline/maps/places/postcodes' -type f | wc -l) -eq 2 ]]"
+  check "every index line has six columns" bash -c "! awk -F'\t' 'NF != 6' '$A/srv/offline/maps/places/names.tsv' | grep -q ."
+else
+  note "unzip or python3 not installed: place index not built"
+fi
+check "with no routing graph the command says how to get one" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' maps routing | grep -q 'sudo offline maps routing build uk'"
+refute "an unknown routing region is refused" offline maps routing build atlantis
+echo 'not a map extract' >"$WORK/fake.osm.pbf"
+check "a file that is not an OpenStreetMap extract is refused before anything runs" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' maps routing build --pbf '$WORK/fake.osm.pbf' 2>&1 | grep -q 'is not an OpenStreetMap PBF extract'"
+check "directions can be switched on" offline maps routing on
+check "switching them on installs the engine's unit and tells the web server" bash -c "grep -q '^PublishPort=127.0.0.1:18700:8002' '$A/etc/containers/systemd/offline-routing.container' && grep -q '^Define OFFLINE_ROUTING' '$A/etc/apache2/conf-available/offline-routing.conf'"
+check "and off again" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' maps routing off >/dev/null && [[ ! -e '$A/etc/containers/systemd/offline-routing.container' && ! -e '$A/etc/apache2/conf-available/offline-routing.conf' ]]"
+check "map regions are fetched by group name" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' maps get uk-nations --dry-run 2>&1 | grep -c '^Map: ' | grep -qx 4 || ! command -v pmtiles >/dev/null"
 
 # --------------------------------------------------------------------------
 # Sync and broadcast between two systems, through the shipped rsync and
@@ -507,8 +751,97 @@ if have rsync && have stunnel; then
   mkdir -p "$WORK/home"
   check "the desktop alert runs for an ordinary user" bash -c "HOME='$WORK/home' XDG_STATE_HOME='$WORK/home/state' DISPLAY= WAYLAND_DISPLAY= OFFLINE_PREFIX='$A' '$ROOT/bin/offline' broadcast alert"
   check "it remembers what the user has been shown" bash -c "[[ \$(wc -l <'$WORK/home/state/offline/broadcasts-seen') -ge 3 ]]"
+
+  echo
+  echo "Vault exchange"
+  # B holds ciphertext, as a real vault would leave it, and some things that are not ciphertext.
+  mkdir -p "$B/srv/offline/vault/H4gUTQjnIQmBDDyYGjEKDw"
+  echo 'conf-as-B-has-it' >"$B/srv/offline/vault/gocryptfs.conf"
+  head -c 16 /dev/urandom >"$B/srv/offline/vault/gocryptfs.diriv"
+  head -c 16 /dev/urandom >"$B/srv/offline/vault/H4gUTQjnIQmBDDyYGjEKDw/gocryptfs.diriv"
+  head -c 900 /dev/urandom >"$B/srv/offline/vault/H4gUTQjnIQmBDDyYGjEKDw/yreZt0nVExB5xAyO8nCZgQ"
+  echo 'plain text' >"$B/srv/offline/vault/notes.txt"
+  printf '#!/bin/sh\n' >"$B/srv/offline/vault/run.sh"
+  ln -s /etc/passwd "$B/srv/offline/vault/passwdlink"
+  rm -rf -- "$A/srv/offline/vault"
+  mkdir -p "$A/srv/offline/vault"
+  check "sync carries the vault's ciphertext" bash -c "OFFLINE_PREFIX='$A' OFFLINE_TEST_PEERS='127.0.0.1:$BPORT' '$ROOT/bin/offline' sync | grep -q 'vault: 4 files to fetch'"
+  check "the key file and the encrypted documents arrive" bash -c "cmp -s '$B/srv/offline/vault/gocryptfs.conf' '$A/srv/offline/vault/gocryptfs.conf' && cmp -s '$B/srv/offline/vault/H4gUTQjnIQmBDDyYGjEKDw/yreZt0nVExB5xAyO8nCZgQ' '$A/srv/offline/vault/H4gUTQjnIQmBDDyYGjEKDw/yreZt0nVExB5xAyO8nCZgQ'"
+  check "what arrives is closed to other accounts" bash -c "[[ \$(stat -c %a '$A/srv/offline/vault/H4gUTQjnIQmBDDyYGjEKDw/yreZt0nVExB5xAyO8nCZgQ') == 660 ]]"
+  refute "a plain file planted in a vault is not fetched" test -e "$A/srv/offline/vault/notes.txt"
+  refute "a script planted in a vault is not fetched" test -e "$A/srv/offline/vault/run.sh"
+  refute "a link planted in a vault is not fetched" test -e "$A/srv/offline/vault/passwdlink"
+  # An edited document keeps its size; only its time tells that it changed.
+  head -c 900 /dev/urandom >"$B/srv/offline/vault/H4gUTQjnIQmBDDyYGjEKDw/yreZt0nVExB5xAyO8nCZgQ"
+  touch -d '+1 hour' "$B/srv/offline/vault/H4gUTQjnIQmBDDyYGjEKDw/yreZt0nVExB5xAyO8nCZgQ"
+  check "a newer copy of a document replaces an older one of the same size" bash -c "OFFLINE_PREFIX='$A' OFFLINE_TEST_PEERS='127.0.0.1:$BPORT' '$ROOT/bin/offline' sync >/dev/null; cmp -s '$B/srv/offline/vault/H4gUTQjnIQmBDDyYGjEKDw/yreZt0nVExB5xAyO8nCZgQ' '$A/srv/offline/vault/H4gUTQjnIQmBDDyYGjEKDw/yreZt0nVExB5xAyO8nCZgQ'"
+  head -c 900 /dev/urandom >"$A/srv/offline/vault/H4gUTQjnIQmBDDyYGjEKDw/yreZt0nVExB5xAyO8nCZgQ"
+  touch -d '+2 hours' "$A/srv/offline/vault/H4gUTQjnIQmBDDyYGjEKDw/yreZt0nVExB5xAyO8nCZgQ"
+  refute "an older copy never replaces a newer one" bash -c "OFFLINE_PREFIX='$A' OFFLINE_TEST_PEERS='127.0.0.1:$BPORT' '$ROOT/bin/offline' sync >/dev/null; cmp -s '$B/srv/offline/vault/H4gUTQjnIQmBDDyYGjEKDw/yreZt0nVExB5xAyO8nCZgQ' '$A/srv/offline/vault/H4gUTQjnIQmBDDyYGjEKDw/yreZt0nVExB5xAyO8nCZgQ'"
+  sed -i 's/^SYNC_MIN_FREE_GB=.*/SYNC_MIN_FREE_GB=100000000/' "$A/etc/offline/offline.conf"
+  head -c 2000 /dev/urandom >"$B/srv/offline/media/movies/second.mp4"
+  check "a system short of space fetches nothing and says so" bash -c "OFFLINE_PREFIX='$A' OFFLINE_TEST_PEERS='127.0.0.1:$BPORT' '$ROOT/bin/offline' sync | grep -q 'left behind to protect free space' && [[ ! -e '$A/srv/offline/media/movies/second.mp4' ]]"
+  sed -i 's/^SYNC_MIN_FREE_GB=.*/SYNC_MIN_FREE_GB=0/' "$A/etc/offline/offline.conf"
+  E="$WORK/e"
+  make_root "$E"
+  echo "$KEY" | OFFLINE_PREFIX="$E" "$ROOT/bin/offline" key set - >/dev/null
+  sed -i 's/^VAULT_SYNC=.*/VAULT_SYNC=no/; s/^SYNC_MODULES=.*/SYNC_MODULES="maps"/' "$E/etc/offline/offline.conf"
+  check "a system told not to hold the vault does not fetch it" bash -c "OFFLINE_PREFIX='$E' OFFLINE_TEST_PEERS='127.0.0.1:$BPORT' '$ROOT/bin/offline' sync >/dev/null; [[ -z \$(ls -A '$E/srv/offline/vault') ]]"
+  if [[ -f "$A/srv/offline/maps/places/names.tsv" ]]; then
+    mkdir -p "$B/srv/offline/maps/places" "$B/srv/offline/maps/routing"
+    cp "$A/srv/offline/maps/places/names.tsv" "$B/srv/offline/maps/places/names.tsv"
+    head -c 20000 /dev/urandom >"$B/srv/offline/maps/routing/graph.tar"
+    check "the place index and the routing graph travel with the maps" bash -c "OFFLINE_PREFIX='$E' OFFLINE_TEST_PEERS='127.0.0.1:$BPORT' '$ROOT/bin/offline' sync >/dev/null; [[ -f '$E/srv/offline/maps/places/names.tsv' && -f '$E/srv/offline/maps/routing/graph.tar' ]]"
+  fi
 else
   note "rsync or stunnel not installed: sync and broadcast checks not run"
+fi
+
+# --------------------------------------------------------------------------
+# Content by disc: out through the filters, and in through them again
+# --------------------------------------------------------------------------
+
+echo
+echo "Export and import"
+if have rsync; then
+  DISC="$WORK/disc"
+  mkdir -p "$DISC" "$A/srv/offline/media/music/.cache"
+  head -c 3000 /dev/urandom >"$A/srv/offline/media/music/song.flac"
+  printf '#!/bin/sh\n' >"$A/srv/offline/media/music/tool.sh"
+  echo hidden >"$A/srv/offline/media/music/.cache/x.mp3"
+  ln -sf /etc/passwd "$A/srv/offline/media/music/link.txt"
+  check "content can be exported to a disc" offline export "$DISC/offline"
+  check "the export says what it is" grep -q 'sudo offline import' "$DISC/offline/OFFLINE-EXPORT.txt"
+  check "films, music and library titles are on the disc" bash -c "[[ -f '$DISC/offline/media/music/song.flac' && -n \$(find '$DISC/offline/knowledge' -name '*.zim' | head -n 1) ]]"
+  refute "a script is not exported" test -e "$DISC/offline/media/music/tool.sh"
+  refute "a hidden folder is not exported" test -e "$DISC/offline/media/music/.cache"
+  refute "a link is not exported" test -e "$DISC/offline/media/music/link.txt"
+  refute "a relative folder is refused" offline export disc
+  check "exporting again copies nothing twice" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' export '$DISC/offline' | grep -q 'To copy: 0 files'"
+  # Somebody else's disc: what is on it cannot be assumed to have come from an export.
+  printf '#!/bin/sh\n' >"$DISC/offline/media/music/planted.sh"
+  echo '<script>' >"$DISC/offline/media/music/page.html"
+  echo 'not a zim' >"$DISC/offline/knowledge/zim/fake_en_2026-03.zim"
+  make_zim "$DISC/offline/knowledge/zim/testwiki_en_all_2020-01.zim"
+  ln -s /etc/passwd "$DISC/offline/media/music/passwd.txt"
+  mkdir -p "$DISC/offline/media/linked" && ln -s /etc "$DISC/offline/media/linked/etc"
+  G="$WORK/g"
+  make_root "$G"
+  make_zim "$G/srv/offline/knowledge/zim/testwiki_en_all_2026-05.zim" 500
+  inbound() { OFFLINE_PREFIX="$G" "$ROOT/bin/offline" import "$@"; }
+  check "a dry run brings nothing in" bash -c "OFFLINE_PREFIX='$G' '$ROOT/bin/offline' import '$DISC/offline' --dry-run | grep -q 'nothing was copied' && [[ ! -e '$G/srv/offline/media/music/song.flac' ]]"
+  check "content can be brought in from a disc" inbound "$DISC/offline"
+  check "music arrives intact" cmp -s "$A/srv/offline/media/music/song.flac" "$G/srv/offline/media/music/song.flac"
+  refute "a script on the disc is not brought in" test -e "$G/srv/offline/media/music/planted.sh"
+  refute "a web page on the disc is not brought in" test -e "$G/srv/offline/media/music/page.html"
+  refute "a link on the disc is not brought in" test -e "$G/srv/offline/media/music/passwd.txt"
+  refute "a linked folder on the disc is not entered" test -e "$G/srv/offline/media/linked"
+  refute "a fake library title is discarded" test -e "$G/srv/offline/knowledge/zim/fake_en_2026-03.zim"
+  refute "an edition older than the one held is not brought in" test -e "$G/srv/offline/knowledge/zim/testwiki_en_all_2020-01.zim"
+  check "only what was asked for is brought in" bash -c "H='$WORK/h'; mkdir -p \"\$H\"; cp -r '$G/etc' '$G/usr' \"\$H/\"; mkdir -p \"\$H/srv/offline/knowledge/zim\" \"\$H/srv/offline/media\" \"\$H/var/lib/offline\" \"\$H/run/offline\"; OFFLINE_PREFIX=\"\$H\" '$ROOT/bin/offline' import '$DISC/offline' --what media >/dev/null && [[ -f \"\$H/srv/offline/media/music/song.flac\" && -z \$(ls -A \"\$H/srv/offline/knowledge/zim\") ]]"
+  refute "a folder that is not an export is refused" inbound "$WORK/geo"
+else
+  note "rsync not installed: export and import not run"
 fi
 
 # --------------------------------------------------------------------------
@@ -535,7 +868,7 @@ if have curl; then
   code() { curl -s -o "$WORK/body.html" -w '%{http_code}' "$@"; }
   printf 'PMTiles-test' >"$A/srv/offline/maps/world.pmtiles"
   mkdir -p "$A/srv/offline/maps/assets/sprites/v4" && echo '{}' >"$A/srv/offline/maps/assets/sprites/v4/light.json"
-  for page in "" library.php media.php "media.php?p=movies" "media.php?p=movies/Trips" "play.php?f=movies/holiday.mp4" peers.php guide.php alerts.php \
+  for page in "" library.php media.php "media.php?p=movies" "media.php?p=movies/Trips" "play.php?f=movies/holiday.mp4" peers.php guide.php alerts.php games.php "places.php?q=penryn" \
     maps.php apps.php radio.php remedies.php "remedies.php?c=cough" "remedies.php?c=../../etc"; do
     if [[ "$(code "http://127.0.0.1:$WEB/$page")" == 200 ]] && ! grep -Eq 'Warning|Notice|Fatal error|Deprecated' "$WORK/body.html"; then
       pass "/$page renders without PHP errors"
@@ -562,6 +895,18 @@ if have curl; then
     refute "markup in the banner feed is neutralised" bash -c "curl -s 'http://127.0.0.1:$WEB/alerts.php' | grep -q '<b>'"
     refute "the banner feed carries no signature" bash -c "curl -s 'http://127.0.0.1:$WEB/alerts.php' | grep -q 'mac'"
   fi
+  check "the games page lists the family worlds" bash -c "curl -s 'http://127.0.0.1:$WEB/games.php' | grep -q 'Family worlds'"
+  check "the games page shows an installed game" bash -c "curl -s 'http://127.0.0.1:$WEB/games.php' | grep -q 'GCompris'"
+  check "the games page links the browser activities" bash -c "curl -s 'http://127.0.0.1:$WEB/games.php' | grep -q ':8600/'"
+  if [[ -f "$A/srv/offline/maps/places/names.tsv" ]]; then
+    check "the map page offers place search" bash -c "curl -s 'http://127.0.0.1:$WEB/maps.php' | grep -q 'id=\"place-query\"'"
+    check "place search answers in JSON" bash -c "curl -s 'http://127.0.0.1:$WEB/places.php?q=TR10+8AB' | php -r '\$d = json_decode(stream_get_contents(STDIN), true); exit((\$d[\"places\"][0][\"name\"] ?? \"\") === \"TR10 8AB\" ? 0 : 1);'"
+    check "of two places with one name the nearer comes first" bash -c "curl -s 'http://127.0.0.1:$WEB/places.php?q=falmouth&near=50.2,-5.1' | php -r '\$d = json_decode(stream_get_contents(STDIN), true); exit(str_contains(\$d[\"places\"][0][\"detail\"] ?? \"\", \"United Kingdom\") ? 0 : 1);' && curl -s 'http://127.0.0.1:$WEB/places.php?q=falmouth&near=41.5,-70.6' | php -r '\$d = json_decode(stream_get_contents(STDIN), true); exit(str_contains(\$d[\"places\"][0][\"detail\"] ?? \"\", \"United States\") ? 0 : 1);'"
+    refute "markup in a place name is neutralised" bash -c "curl -s 'http://127.0.0.1:$WEB/places.php?q=bold' | grep -q '<b>'"
+    check "a search with control characters is refused" bash -c "[[ \$(curl -s -o /dev/null -w '%{http_code}' 'http://127.0.0.1:$WEB/places.php?q=%00x') == 400 ]]"
+  fi
+  refute "directions are not offered without a graph and its engine" bash -c "curl -s 'http://127.0.0.1:$WEB/maps.php' | grep -q 'id=\"route-panel\"'"
+  check "the guide covers the vault and the hotspot" bash -c "curl -s 'http://127.0.0.1:$WEB/guide.php' | grep -q 'offline vault open' && curl -s 'http://127.0.0.1:$WEB/guide.php' | grep -q 'offline hotspot on'"
   check "the systems page explains the broadcast" bash -c "curl -s 'http://127.0.0.1:$WEB/peers.php' | grep -q 'offline broadcast --urgent'"
   check "the systems page shows the download queue" bash -c "curl -s 'http://127.0.0.1:$WEB/peers.php' | grep -q 'NHS Health A to Z'"
   check "the apps page shows what is installed" bash -c "curl -s 'http://127.0.0.1:$WEB/apps.php' | grep -q 'sudo offline apps start vaultwarden'"
