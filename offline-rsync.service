@@ -1,0 +1,12 @@
+[Unit]
+Description=Offline knowledge and media sharing server
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/rsync --daemon --no-detach --config=/etc/offline-rsyncd.conf --port=47001
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

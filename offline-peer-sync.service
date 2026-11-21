@@ -1,0 +1,6 @@
+[Unit]
+Description=Scan the local network for offline peers
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/offline-peer-sync
