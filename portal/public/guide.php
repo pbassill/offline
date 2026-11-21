@@ -112,6 +112,18 @@ offline stage
 sudo offline stage publish all</code></pre>
 </section>
 
+<section id="books" aria-labelledby="g-books">
+  <h2 id="g-books">Fetch books, and the outdoor cooking shelf</h2>
+  <p>A book is a single document, kept under <em>Media</em>, <em>books</em>. Each one on the list is fetched from where it is published and checked against the size and checksum recorded for it; a file that differs is thrown away.</p>
+  <pre><code>offline books
+sudo offline books get outdoor-cooking
+sudo offline queue run</code></pre>
+  <p>The <code>outdoor-cooking</code> shelf is 39 books on cooking over fire, with Dutch-oven and one-pot cooking first. For the library titles on the same subject, and the recipe sites a server can archive:</p>
+  <pre><code>sudo offline get outdoor-cooking
+sudo offline queue site cooking</code></pre>
+  <p>The list says against each book and each site on what terms it may be copied. Several are for this household's own use and not for passing on.</p>
+</section>
+
 <section id="broadcast" aria-labelledby="g-broadcast">
   <h2 id="g-broadcast">Send a family broadcast</h2>
   <p>A broadcast goes to every screen in the household and to the mesh radios. Open <em>Family broadcast</em> from the applications menu, or type:</p>

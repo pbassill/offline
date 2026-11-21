@@ -34,6 +34,10 @@ page_start('Systems', 'peers');
 
 <section aria-labelledby="h-last">
   <h2 id="h-last">Last exchange</h2>
+<?php $running = $s['sync']['running'] ?? null; ?>
+<?php if (is_array($running) && $enabled) : ?>
+  <div class="notice" role="status"><i class="fa-solid fa-arrows-rotate" aria-hidden="true"></i> An exchange is running now, since <?= e(utc_display((string) ($running['started'] ?? ''))) ?>: <?= e((string) ($running['stage'] ?? '')) ?>. A first copy from a server can take hours, and what it fetched is counted here when it ends.</div>
+<?php endif; ?>
 <?php if ($last === null) : ?>
   <p class="empty">None has run yet. Start one now with <code>sudo offline sync</code>.</p>
 <?php else : ?>

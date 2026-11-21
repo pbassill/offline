@@ -152,6 +152,10 @@ if (!($s['sync']['enabled'] ?? true)) {
 } else {
     echo '<p>Last checked ' . e(utc_display($last['finished'] ?? null)) . '. ' . e(ucfirst((string) ($last['message'] ?? ''))) . '.</p>';
 }
+$running = $s['sync']['running'] ?? null;
+if (is_array($running) && ($s['sync']['enabled'] ?? true)) {
+    echo '<p>An exchange is running now, since ' . e(utc_display((string) ($running['started'] ?? ''))) . '.</p>';
+}
 if ($peers !== []) {
     echo '<p><a href="/peers.php">' . count($peers) . ' known ' . (count($peers) === 1 ? 'system' : 'systems') . '</a></p>';
 }

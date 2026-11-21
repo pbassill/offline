@@ -17,6 +17,7 @@ require_once __DIR__ . '/maps.php';
 require_once __DIR__ . '/apps.php';
 require_once __DIR__ . '/radio.php';
 require_once __DIR__ . '/server.php';
+require_once __DIR__ . '/books.php';
 require_once __DIR__ . '/broadcast.php';
 require_once __DIR__ . '/games.php';
 require_once __DIR__ . '/network.php';
@@ -526,6 +527,7 @@ function collect_status(): array
         'sync' => [
             'enabled' => config_bool('SYNC_ENABLED'),
             'last_run' => $peers['last_run'] ?? null,
+            'running' => sync_in_progress($peers),
             'peers' => array_values($peers['peers'] ?? []),
         ],
     ];
@@ -646,9 +648,12 @@ function command_status(array $args): int
     if (!$status['sync']['enabled']) {
         out('  Peer sync is switched off in /etc/offline/offline.conf.');
     } elseif ($last === null) {
-        out('  No sync has run yet.');
+        out('  No sync has finished yet.');
     } else {
         out('  Last sync ' . utc_display($last['finished'] ?? null) . ': ' . printable((string) ($last['message'] ?? '')));
+    }
+    if ($status['sync']['running'] !== null) {
+        out('  A sync is running now, since ' . utc_display($status['sync']['running']['started']) . ': ' . printable($status['sync']['running']['stage'], 160) . '.');
     }
     $rows = [];
     foreach ($status['sync']['peers'] as $peer) {
@@ -734,19 +739,37 @@ function command_doctor(array $args): int
     if ($rejected !== []) {
         $add('Peers', 'warn', plural(count($rejected), 'system') . ' refused this system\'s house key', 'Give every system the same key: sudo offline key set KEY');
     } elseif ($seen === []) {
-        $add('Peers', 'warn', 'no trusted system has been reached yet', 'sudo offline sync');
+        $busy = $status['sync']['running'] !== null;
+        $add('Peers', 'warn', 'no trusted system has been reached yet' . ($busy ? '; a sync is running now' : ''), $busy ? 'offline doctor   again in a minute' : 'sudo offline sync');
     } else {
         $add('Peers', 'ok', plural(count($seen), 'trusted system') . ' known');
     }
     $known = array_column($status['sync']['peers'], null, 'address');
+    $running = $status['sync']['running'];
+    $lastRun = $status['sync']['last_run'];
     foreach ($status['servers'] as $server) {
         $auth = $known[$server]['auth'] ?? 'unknown';
+        $fetched = $known[$server]['last_sync'] ?? null;
         $add("Server $server", $auth === 'ok' ? 'ok' : 'warn', match ($auth) {
-            'ok' => 'reached at ' . utc_display($known[$server]['last_sync'] ?? null),
+            'ok' => 'key accepted at ' . utc_display($known[$server]['last_contact'] ?? $fetched)
+                . ($fetched !== null ? '; last sync finished ' . utc_display($fetched) : '; no sync from it has finished yet'),
             'rejected' => 'holds a different house key',
-            'unknown' => 'not yet contacted',
-            default => 'not reached at the last sync (expected when it is out of range)',
-        }, 'sudo offline server test');
+            'unknown' => $running !== null ? 'not yet reached by the sync now running' : 'not yet contacted',
+            default => 'not reached when last tried (expected when it is out of range)',
+        }, $auth === 'rejected' ? 'Give every system the same key: sudo offline key set KEY' : 'sudo offline server test');
+    }
+    // The run itself: one in progress, one that was turned away, and one that never happened all look alike otherwise.
+    if ($status['sync']['enabled'] && ($status['servers'] !== [] || $status['sync']['peers'] !== [])) {
+        if ($running !== null) {
+            $add('Sync run', 'ok', 'in progress since ' . utc_display($running['started']) . ($running['stage'] !== '' ? ': ' . printable($running['stage'], 120) : ''));
+        } elseif ($lastRun === null) {
+            $add('Sync run', 'warn', 'none has finished yet', 'sudo offline sync');
+        } elseif (($lastRun['result'] ?? '') !== 'ok') {
+            $add('Sync run', ($lastRun['result'] ?? '') === 'error' ? 'fail' : 'warn', 'the last, at ' . utc_display($lastRun['finished'] ?? null) . ' did not go ahead: ' . printable((string) ($lastRun['message'] ?? ''), 160),
+                'journalctl -u offline-peer-sync --since today');
+        } else {
+            $add('Sync run', 'ok', 'the last finished ' . utc_display($lastRun['finished'] ?? null) . ': ' . printable((string) ($lastRun['message'] ?? ''), 160));
+        }
     }
     if ($status['vault']['ready']) {
         $open = ((int) @fileperms(path('vault')) & 0007) !== 0;
@@ -1708,20 +1731,92 @@ function merge_peers(array $state, array $found, ?array $lastRun = null, array $
             $entry['total_bytes'] += $result['bytes'];
             if ($result['auth'] === 'ok') {
                 $entry['last_sync'] = $now;
+                $entry['last_contact'] = $now;
             }
         }
         $peers[$ip] = $entry;
     }
     // Forget machines not seen for thirty days.
     $peers = array_filter($peers, static fn (array $p): bool => strtotime((string) ($p['last_seen'] ?? '')) > time() - 30 * 86400);
-    return ['updated' => $now, 'peers' => $peers, 'last_run' => $lastRun ?? ($state['last_run'] ?? null)];
+    return ['updated' => $now, 'peers' => $peers, 'last_run' => $lastRun ?? ($state['last_run'] ?? null)]
+        + (isset($state['running']) ? ['running' => $state['running']] : []);
+}
+
+/**
+ * Change the record of other systems under a lock. A sync that runs for hours
+ * notes what it learns as it goes, and "offline server test" and "offline
+ * peers" may write in the meantime; each re-reads the record before altering it.
+ */
+function peers_update(callable $change): array
+{
+    $lock = lock('peers-state', true);
+    $state = $change(read_json(path('peers')));
+    write_json(path('peers'), $state);
+    if (\is_resource($lock)) {
+        flock($lock, LOCK_UN);
+        fclose($lock);
+    }
+    return $state;
 }
 
 function remember_peers(array $found, ?array $lastRun = null, array $results = []): array
 {
-    $state = merge_peers(read_json(path('peers')), $found, $lastRun, $results);
-    write_json(path('peers'), $state);
-    return $state;
+    return peers_update(static function (array $state) use ($found, $lastRun, $results): array {
+        $merged = merge_peers($state, $found, $lastRun, $results);
+        // A run that has ended takes its own marker away, and never another run's.
+        if ($lastRun !== null && (int) ($merged['running']['pid'] ?? 0) === getmypid()) {
+            unset($merged['running']);
+        }
+        return $merged;
+    });
+}
+
+/**
+ * Record, the moment it is known, whether a system answered and took the
+ * house key. The totals are left to the end of the run, which alone knows them.
+ */
+function note_peer(string $key, array $peer, string $auth, string $error = ''): void
+{
+    peers_update(static function (array $state) use ($key, $peer, $auth, $error): array {
+        $now = utc_now();
+        $entry = $state['peers'][$key] ?? ['address' => $key, 'first_seen' => $now, 'auth' => 'unknown', 'total_files' => 0, 'total_bytes' => 0];
+        $entry['name'] = ($peer['name'] ?? '') !== '' ? $peer['name'] : ($entry['name'] ?? '');
+        $entry['method'] = $peer['method'] ?? ($entry['method'] ?? 'server');
+        $entry['last_seen'] = $now;
+        $entry['auth'] = $auth;
+        $entry['last_error'] = $error;
+        if ($auth === 'ok') {
+            $entry['last_contact'] = $now;
+        }
+        $state['peers'][$key] = $entry;
+        $state['updated'] = $now;
+        return $state + ['last_run' => null];
+    });
+}
+
+/** Say what the sync now running is doing, so that a long one can be told from none at all. */
+function sync_running(string $started, string $stage): void
+{
+    peers_update(static function (array $state) use ($started, $stage): array {
+        $state['running'] = ['pid' => getmypid(), 'started' => $started, 'stage' => $stage, 'updated' => utc_now()];
+        return $state + ['peers' => [], 'last_run' => null];
+    });
+}
+
+/** The sync in progress, if the process that said so is still alive; otherwise null. */
+function sync_in_progress(array $peers): ?array
+{
+    $running = $peers['running'] ?? null;
+    $pid = (int) ($running['pid'] ?? 0);
+    if (!is_array($running) || $pid < 1 || !is_string($running['started'] ?? null)) {
+        return null;
+    }
+    $alive = (\function_exists('posix_getpgid') && @posix_getpgid($pid) !== false) || @file_exists("/proc/$pid");
+    // A process that has ended and not yet been collected still has a number, and is not running.
+    if ($alive && preg_match('/^\d+ \(.*\) Z /s', (string) @file_get_contents("/proc/$pid/stat")) === 1) {
+        $alive = false;
+    }
+    return $alive ? ['started' => $running['started'], 'stage' => (string) ($running['stage'] ?? '')] : null;
 }
 
 function command_peers(array $args): int
@@ -1780,6 +1875,9 @@ function command_sync(array $args): int
         return $finish('skipped', 'A download or another sync is already running; skipped.');
     }
 
+    if (!$dryRun) {
+        sync_running($started, 'looking for other systems');
+    }
     $found = discover_peers($interactive);
     if ($found === []) {
         return $finish('ok', 'No other system found on the local network.');
@@ -1804,6 +1902,7 @@ function command_sync(array $args): int
             $result['auth'] = $probe['ok'] ? 'ok' : $probe['auth'];
             $result['error'] = $probe['ok'] ? '' : $probe['error'];
         }
+        $noted = false;
         foreach ($modules as $module) {
             $listing = remote_listing($peer, $module);
             if (!$listing['ok']) {
@@ -1811,6 +1910,9 @@ function command_sync(array $args): int
                     $result['auth'] = 'rejected';
                     $result['error'] = $listing['error'];
                     out("  $ip: {$listing['error']}");
+                    if (!$dryRun) {
+                        note_peer((string) $ip, $peer, 'rejected', $listing['error']);
+                    }
                     break;
                 }
                 // A system on an older version may not offer every module; carry on with the rest.
@@ -1818,6 +1920,12 @@ function command_sync(array $args): int
                 continue;
             }
             $result['auth'] = 'ok';
+            // Written down at once: the fetch that follows may take hours, and until now
+            // nothing said that the system had answered until the whole run was over.
+            if (!$noted && !$dryRun) {
+                note_peer((string) $ip, $peer, 'ok');
+                $noted = true;
+            }
             $result['offers'][$module] = ['files' => count($listing['files']), 'bytes' => array_sum(array_column($listing['files'], 'size'))];
             $wanted = plan_pull($module, $listing['files'], $budget, $counts);
             if ($wanted === []) {
@@ -1831,6 +1939,7 @@ function command_sync(array $args): int
                 }
                 continue;
             }
+            sync_running($started, 'fetching ' . plural(count($wanted), 'file') . ' (' . human_bytes($size) . ") from $ip, $module");
             [$files, $bytes, $error] = pull_files($peer, $module, $wanted, $interactive);
             $result['files'] += $files;
             $result['bytes'] += $bytes;
@@ -2134,6 +2243,9 @@ function usage(): void
     out('  offline queue sites                  websites worth archiving, UK ones included');
     out('  offline queue site NAME|GROUP        archive a website as a library title');
     out('  offline queue run | archive | remove ID | retry ID');
+    out('  offline books [list [SHELF]]         books worth a copy, each held to a checksum');
+    out('  offline books get NAME|SHELF|all     fetch them: outdoor-cooking is the fire-cooking shelf');
+    out('  offline books show NAME | verify');
     out('  offline stage                        what has been downloaded and awaits release');
     out('  offline stage publish ID|all [--to FOLDER] | discard ID');
     out();
@@ -2250,6 +2362,7 @@ function main(array $argv): int
         'time' => command_time($args),
         'server', 'servers' => command_server($args),
         'queue' => command_queue($args),
+        'books', 'book' => command_books($args),
         'stage', 'staging' => command_stage($args),
         'broadcast' => command_broadcast($args),
         'version', '--version', '-V' => (static function (): int {

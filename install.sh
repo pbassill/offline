@@ -15,7 +15,7 @@ set -Eeuo pipefail
 IFS=$'\n\t'
 umask 022
 
-readonly OFFLINE_VERSION="2.5.0"
+readonly OFFLINE_VERSION="2.6.0"
 readonly SHARE_ROOT="/srv/offline"
 readonly STATE_DIR="/var/lib/offline"
 readonly CONF_DIR="/etc/offline"
@@ -336,7 +336,7 @@ migrate_layout() {
 install_tools() {
   install -m 0755 -o root -g root "$SCRIPT_DIR/bin/offline" /usr/local/bin/offline
   install -m 0644 -o root -g root "$SCRIPT_DIR"/lib/*.php "$SCRIPT_DIR/config/catalogue.tsv" "$SCRIPT_DIR/config/maps.tsv" \
-    "$SCRIPT_DIR/config/sites.tsv" "$SCRIPT_DIR/config/packages.list" "$SCRIPT_DIR/config/offline-routing.container" \
+    "$SCRIPT_DIR/config/sites.tsv" "$SCRIPT_DIR/config/books.tsv" "$SCRIPT_DIR/config/packages.list" "$SCRIPT_DIR/config/offline-routing.container" \
     "$SCRIPT_DIR/config/children.tsv" "$SCRIPT_DIR/config/children-guard.nft" "$LIB_DIR/"
   install -m 0755 -o root -g root "$SCRIPT_DIR/config/apt-proxy-detect" "$LIB_DIR/apt-proxy-detect"
   install -m 0755 -o root -g root "$SCRIPT_DIR/mesh/offline-mesh-bridge" "$LIB_DIR/offline-mesh-bridge"
@@ -376,6 +376,10 @@ install_tools() {
   if [[ ! -e "$CONF_DIR/sites.local.tsv" ]]; then
     printf '# Your own websites to archive. Columns separated by single tabs:\n# id\tgroup\taddress\tZIM name\ttitle\tpage limit\tnote\n' >"$CONF_DIR/sites.local.tsv"
     chmod 0644 "$CONF_DIR/sites.local.tsv"
+  fi
+  if [[ ! -e "$CONF_DIR/books.local.tsv" ]]; then
+    printf '# Your own books to fetch. Columns separated by single tabs:\n# id\tshelf\taddress\tSHA-256\tsize in bytes\trights\ttitle\tnote\n# rights is pd, cc, marked or private. Where the checksum cannot be known, put a hyphen for it and for the size.\n' >"$CONF_DIR/books.local.tsv"
+    chmod 0644 "$CONF_DIR/books.local.tsv"
   fi
   if [[ ! -e "$CONF_DIR/maps.local.tsv" ]]; then
     printf '# Your own map regions. Columns separated by single tabs:\n# id\tgroup\tname\tbbox\twest,south,east,north\n' >"$CONF_DIR/maps.local.tsv"
@@ -844,7 +848,7 @@ readonly TARGET_HOME
 
 for required in bin/offline lib/core.php lib/cli.php lib/maps.php lib/apps.php lib/radio.php lib/server.php lib/broadcast.php \
   lib/games.php lib/network.php lib/vault.php lib/rebuild.php games/games.tsv config/packages.list config/apt-proxy-detect \
-  config/offline.conf config/catalogue.tsv config/maps.tsv config/sites.tsv config/rsyncd.conf config/stunnel.conf apps/apps.tsv \
+  config/offline.conf config/catalogue.tsv config/maps.tsv config/sites.tsv config/books.tsv lib/books.php config/rsyncd.conf config/stunnel.conf apps/apps.tsv \
   data/conditions.json portal/public/index.php systemd/offline-rsync.service systemd/offline-tls.service \
   systemd/offline-broadcast.service desktop/offline-alert-agent; do
   [[ -f "$SCRIPT_DIR/$required" ]] || { echo "Missing $required. Run the installer from a complete copy of the repository." >&2; exit 1; }

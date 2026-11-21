@@ -277,6 +277,12 @@ check "the household pack holds Wikivoyage" grep -q '^household	wikivoyage_en_al
 check "six continents are on the map list" bash -c "[[ \$(grep -c '	continents	' '$ROOT/config/maps.tsv') -eq 6 ]]"
 check "the four UK nations are on the map list" bash -c "[[ \$(grep -c '	uk-nations	' '$ROOT/config/maps.tsv') -eq 4 ]]"
 refute "every site to archive is reached over https" bash -c "grep -v '^#' '$ROOT/config/sites.tsv' | cut -f3 | grep -qv '^https://'"
+check "every site to archive says on what terms it may be copied" bash -c "! grep -v '^#' '$ROOT/config/sites.tsv' | awk -F'\t' 'NF != 7 || \$7 == \"\" {bad = 1} END {exit bad ? 0 : 1}'"
+check "the sites list no longer calls every site openly licensed" bash -c "grep -q 'private household copy\|own household' '$ROOT/config/sites.tsv' && ! grep -q '^# Each is published under the Open Government Licence' '$ROOT/config/sites.tsv'"
+check "every book has eight columns, an https address and a checksum" bash -c "! grep -v '^#' '$ROOT/config/books.tsv' | awk -F'\t' 'NF != 8 || \$3 !~ /^https:\/\/archive\.org\/download\/[A-Za-z0-9._%\/-]+\.pdf\$/ || \$4 !~ /^[0-9a-f]{64}\$/ || \$5 !~ /^[1-9][0-9]+\$/ || \$6 !~ /^(pd|cc|marked)\$/ || length(\$7) > 40 || \$8 == \"\" {bad = 1} END {exit bad ? 0 : 1}'"
+check "no book is listed twice, by name or by checksum" bash -c "[[ -z \$(grep -v '^#' '$ROOT/config/books.tsv' | cut -f1 | sort | uniq -d) && -z \$(grep -v '^#' '$ROOT/config/books.tsv' | cut -f4 | sort | uniq -d) ]]"
+check "every book whose licence is unconfirmed says so in its note" bash -c "! awk -F'\t' '\$6 == \"marked\" && \$8 !~ /private household copy/ {bad = 1} END {exit bad ? 0 : 1}' '$ROOT/config/books.tsv'"
+check "the catalogue has an outdoor cooking pack" bash -c "grep -q '^outdoor-cooking	publicdomainrecipes.com_en_all	' '$ROOT/config/catalogue.tsv' && grep -q '^outdoor-cooking-extra	gutenberg_en_lcc-t	' '$ROOT/config/catalogue.tsv'"
 if have shellcheck; then
   check "the desktop scripts pass shellcheck" shellcheck "$ROOT/desktop/offline-alert-agent" "$ROOT/desktop/offline-broadcast-send"
 fi
@@ -315,7 +321,7 @@ make_root() {
     "$1"/srv/offline/vault "$1"/usr/games "$1"/run/offline-auth "$1"/etc/offline/tls \
     "$1"/srv/offline/maps "$1"/srv/offline/radio "$1"/srv/offline/apps "$1"/sys/class/power_supply/BAT0 \
     "$1"/sys/bus/usb/devices/1-1 "$1"/sys/bus/usb/devices/1-2
-  cp "$ROOT/config/catalogue.tsv" "$ROOT/config/maps.tsv" "$ROOT/config/sites.tsv" "$1/usr/local/lib/offline/"
+  cp "$ROOT/config/catalogue.tsv" "$ROOT/config/maps.tsv" "$ROOT/config/sites.tsv" "$ROOT/config/books.tsv" "$1/usr/local/lib/offline/"
   cp -r "$ROOT/apps" "$ROOT/data" "$ROOT/games" "$1/usr/local/lib/offline/"
   cp "$ROOT/config/packages.list" "$ROOT/config/offline-routing.container" "$ROOT/config/children.tsv" "$1/usr/local/lib/offline/"
   echo 0bda >"$1/sys/bus/usb/devices/1-1/idVendor"; echo 2838 >"$1/sys/bus/usb/devices/1-1/idProduct"
@@ -452,6 +458,81 @@ check "a link in staging is never published" bash -c "! find '$A/srv/offline/med
 check "the item is recorded as published" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' queue | grep -q 'published'"
 check "a queued item can be removed" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' queue remove '$QID' && ! grep -q '$QID' '$A/var/lib/offline/queue.json' && [[ ! -e '$A/srv/offline/staging/$QID' ]]"
 check "status reports the role and the queue" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' status --json | php -r '\$s = json_decode(stream_get_contents(STDIN), true); exit(\$s[\"role\"] === \"workstation\" && \$s[\"queue\"][\"total\"] === 3 ? 0 : 1);'"
+
+echo
+echo "Books"
+check "the outdoor cooking pack is on offer" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' catalogue outdoor-cooking | grep -q scoutwiki.org_en_all_maxi"
+check "the cooking sites can be listed" bash -c "[[ \$(OFFLINE_PREFIX='$A' '$ROOT/bin/offline' queue sites | grep -c ' cooking ') -eq 7 ]]"
+check "books are listed with their rights" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' books | grep -q 'geezer-cookbook .*marked .*The Geezer Cookbook'"
+check "a shelf can be listed on its own" bash -c "[[ \$(OFFLINE_PREFIX='$A' '$ROOT/bin/offline' books list outdoor-cooking/dutch-oven | grep -c ' outdoor-cooking/dutch-oven ') -eq 6 ]]"
+check "a shelf's name covers the shelves beneath it" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' books list outdoor-cooking | grep -q '^39 books'"
+refute "an unknown shelf is reported" offline books list no-such-shelf
+check "a book's line can be read in full" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' books show kephart-camp-cookery | grep -q 'SHA-256 [0-9a-f]\{64\}'"
+refute "an unknown book cannot be fetched" offline books get no-such-book
+# A book of the household's own, with a file we can make here. Nothing below touches the network.
+printf '%%PDF-1.4\n%s\n' "A test book about cooking over a fire." >"$WORK/test-book.pdf"
+BOOK_SHA="$(sha256sum "$WORK/test-book.pdf" | cut -d' ' -f1)"
+BOOK_SIZE="$(stat -c %s "$WORK/test-book.pdf")"
+{
+  printf 'test-book\ttests/shelf\thttps://example.org/files/test.pdf\t%s\t%s\tprivate\tTest book\tA note.\n' "$BOOK_SHA" "$BOOK_SIZE"
+  printf 'loose-book\ttests/shelf\thttps://example.org/files/loose.pdf\t-\t-\tprivate\tLoose book\tNo checksum.\n'
+  printf 'plain-http\ttests/shelf\thttp://example.org/files/x.pdf\t-\t-\tprivate\tPlain http\t\n'
+  printf 'bad-shelf\t../../etc\thttps://example.org/files/x.pdf\t-\t-\tprivate\tBad shelf\t\n'
+  printf 'a-program\ttests/shelf\thttps://example.org/files/x.exe\t-\t-\tprivate\tA program\t\n'
+  printf 'a-query\ttests/shelf\thttps://example.org/get?file=x.pdf\t-\t-\tprivate\tA query\t\n'
+  printf 'half-pinned\ttests/shelf\thttps://example.org/files/x.pdf\t%s\t-\tprivate\tHalf pinned\t\n' "$BOOK_SHA"
+  printf 'odd-rights\ttests/shelf\thttps://example.org/files/x.pdf\t-\t-\tmine\tOdd rights\t\n'
+} >"$A/etc/offline/books.local.tsv"
+printf 'shipped-loose\ttests/shelf\thttps://example.org/files/y.pdf\t-\t-\tpd\tShipped loose\t\n' >>"$A/usr/local/lib/offline/books.tsv"
+BOOKS="$(OFFLINE_PREFIX="$A" "$ROOT/bin/offline" books list tests/shelf)"
+check "the household's own books join the list" bash -c "grep -q '^  test-book ' <<<\"\$1\" && grep -q '^  loose-book ' <<<\"\$1\"" _ "$BOOKS"
+refute "a book over plain http, on a bad shelf, of another type or with a query is ignored" grep -q -e plain-http -e bad-shelf -e a-program -e a-query <<<"$BOOKS"
+refute "a book with half a pin or unknown rights is ignored" grep -q -e half-pinned -e odd-rights <<<"$BOOKS"
+refute "a book in the shipped list cannot go without a checksum" grep -q shipped-loose <<<"$BOOKS"
+check "a book can be queued" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' books get test-book | grep -q '^Queued [0-9a-f]\{8\}: Test book'"
+check "a book already on its way is not queued twice" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' books get tests/shelf | grep -q 'Already on its way: Test book'"
+book_item() { php -r '$q = json_decode(file_get_contents($argv[1]), true); foreach ($q["items"] as $i) { if (($i["book"] ?? "") === $argv[2] && $i["state"] === $argv[3]) { echo $i["id"]; } }' "$A/var/lib/offline/queue.json" "$1" "$2"; }
+BID="$(book_item test-book queued)"
+LID="$(book_item loose-book queued)"
+check "the queue shows a book by its title and shelf" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' queue | grep -q \"$BID .*media/books/tests/shelf .*Test book\""
+# The wrong file arrives: the right size and the right first bytes, and one letter different.
+mkdir -p "$A/srv/offline/staging/$BID"
+sed 's/cooking/Cooking/' "$WORK/test-book.pdf" >"$A/srv/offline/staging/$BID/test-book.pdf"
+offline queue mark "$BID" staged "1 file" >/dev/null
+refute "a book that is not the file on its line is not published" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' stage publish '$BID' && test -e '$A/srv/offline/media/books/tests/shelf/test-book.pdf'"
+check "the wrong file is discarded and the reason recorded" bash -c "[[ ! -e '$A/srv/offline/staging/$BID' ]] && OFFLINE_PREFIX='$A' '$ROOT/bin/offline' queue | grep -q \"$BID .*failed .*discarded: its SHA-256\""
+# The right file arrives, with company it did not ask for.
+check "a book that failed can be asked for again" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' books get test-book | grep -q '^Queued'"
+BID="$(book_item test-book queued)"
+mkdir -p "$A/srv/offline/staging/$BID" "$A/srv/offline/staging/$LID"
+cp "$WORK/test-book.pdf" "$A/srv/offline/staging/$BID/test-book.pdf"
+head -c 2000 /dev/urandom >"$A/srv/offline/staging/$BID/stowaway.mp4"
+printf '%%PDF-1.4 loose\n' >"$A/srv/offline/staging/$LID/loose-book.pdf"
+offline queue mark "$BID" staged "2 files" >/dev/null
+offline queue mark "$LID" staged "1 file" >/dev/null
+check "the queue runs with a book waiting" offline queue run
+check "a book that matches its checksum is published without review" test -f "$A/srv/offline/media/books/tests/shelf/test-book.pdf"
+check "nothing else in a book's folder is published with it" bash -c "! find '$A/srv/offline/media' -name 'stowaway.mp4' | grep -q . && [[ ! -e '$A/srv/offline/staging/$BID' ]]"
+check "a book with no checksum waits in staging" bash -c "[[ ! -e '$A/srv/offline/media/books/tests/shelf/loose-book.pdf' ]] && OFFLINE_PREFIX='$A' '$ROOT/bin/offline' stage | grep -q 'Loose book'"
+check "a book cannot be published to another folder" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' stage publish '$LID' --to movies && test -f '$A/srv/offline/media/books/tests/shelf/loose-book.pdf' && ! test -e '$A/srv/offline/media/movies/loose-book.pdf'"
+check "the books that are here are listed as here" bash -c "[[ \$(OFFLINE_PREFIX='$A' '$ROOT/bin/offline' books list tests/shelf | grep -c ' here ') -eq 2 ]]"
+check "a book that is here is not fetched again" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' books get test-book | grep -q 'Already here'"
+check "the books here match their lines" offline books verify
+# A file that only claims to be a PDF.
+rm -f "$A/srv/offline/media/books/tests/shelf/loose-book.pdf"
+offline books get loose-book >/dev/null
+LID="$(book_item loose-book queued)"
+mkdir -p "$A/srv/offline/staging/$LID"
+printf '#!/bin/sh\necho not a book\n' >"$A/srv/offline/staging/$LID/loose-book.pdf"
+offline queue mark "$LID" staged "1 file" >/dev/null
+refute "a file that is a PDF in name only is not published" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' stage publish '$LID' && test -e '$A/srv/offline/media/books/tests/shelf/loose-book.pdf'"
+ln -s /etc/passwd "$WORK/link.pdf"
+check "a link is never taken for a book" bash -c "php -r 'require \$argv[1] . \"/lib/cli.php\"; exit(Offline\\book_problem(\$argv[2], [\"file\" => \"x.pdf\"]) === null ? 1 : 0);' '$ROOT' '$WORK/link.pdf'"
+echo ' ' >>"$A/srv/offline/media/books/tests/shelf/test-book.pdf"
+refute "a book altered after it arrived is found out" offline books verify
+check "an altered book is left for a person to deal with" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' books get test-book | grep -q 'Left alone'"
+rm -f "$A/etc/offline/books.local.tsv" "$A/srv/offline/media/books/tests/shelf/test-book.pdf"
+sed -i '/^shipped-loose/d' "$A/usr/local/lib/offline/books.tsv"
 
 echo
 echo "People"
@@ -912,7 +993,38 @@ if have rsync && have stunnel; then
   check "the peer is recorded as trusted" grep -q '"auth": "ok"' "$A/var/lib/offline/peers.json"
   refute "no connection settings are left behind" bash -c "find '$A/var/lib/offline' -name 'tls-*' | grep -q ."
   check "a named server is pulled from like any peer" bash -c "sed -i 's/^SERVERS=.*/SERVERS=\"127.0.0.1:$BPORT\"/' '$A/etc/offline/offline.conf' && OFFLINE_PREFIX='$A' '$ROOT/bin/offline' server test | grep -q 'key accepted'"
+  # A server that has only been tested. Nothing has been fetched from it, and the health check must still know it answered.
+  cp "$A/var/lib/offline/peers.json" "$WORK/peers.keep"
+  rm -f "$A/var/lib/offline/peers.json"
+  check "before anything has reached a server, the health check says so" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' doctor | grep -q 'Server 127.0.0.1:$BPORT .*not yet contacted'"
+  offline server test >/dev/null 2>&1 || true
+  check "a server test is remembered" bash -c "grep -q '\"auth\": \"ok\"' '$A/var/lib/offline/peers.json' && grep -q '\"last_contact\"' '$A/var/lib/offline/peers.json' && ! grep -q '\"last_sync\"' '$A/var/lib/offline/peers.json'"
+  check "the health check then says the key was accepted, and that nothing has been fetched yet" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' doctor | grep -q 'Server 127.0.0.1:$BPORT .*key accepted at .*no sync from it has finished yet'"
+  check "the health check counts a tested server as a trusted system" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' doctor | grep -q 'Peers .*1 trusted system known'"
+  check "the list of servers shows when the key was accepted" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' server | grep -q '127.0.0.1 .*ok .*UTC .*never'"
+  echo "AAAAA-AAAAA-AAAAA-AAAAA-AAAAA" | OFFLINE_PREFIX="$A" "$ROOT/bin/offline" key set - >/dev/null
+  offline server test >/dev/null 2>&1 || true
+  check "a server that refuses the key is remembered as such" bash -c "grep -q '\"auth\": \"rejected\"' '$A/var/lib/offline/peers.json' && OFFLINE_PREFIX='$A' '$ROOT/bin/offline' doctor | grep -q 'Server 127.0.0.1:$BPORT .*holds a different house key'"
+  echo "$KEY" | OFFLINE_PREFIX="$A" "$ROOT/bin/offline" key set - >/dev/null
+  offline server test >/dev/null 2>&1 || true
   check "sync lists a named server first" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' sync | grep -q '1 system found, 1 trusted'"
+  check "a finished sync leaves no marker of a run in progress" bash -c "! grep -q '\"running\"' '$A/var/lib/offline/peers.json' && grep -q '\"last_sync\"' '$A/var/lib/offline/peers.json'"
+  check "the health check reports the last run" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' doctor | grep -q 'Sync run .*the last finished .*1 system found, 1 trusted'"
+  # A long run in progress, stood in for by a process that holds the content lock and has left its marker.
+  ( exec 9>>"$A/var/lib/offline/content.lock"; flock 9; exec sleep 30 ) &
+  HOLDER_PID=$!
+  sleep 0.5
+  php -r '$f = $argv[1]; $s = json_decode(file_get_contents($f), true); $s["running"] = ["pid" => (int) $argv[2], "started" => gmdate("Y-m-d\TH:i:s\Z"), "stage" => "fetching 31 files (88.0 GiB) from files.example.org, knowledge"]; file_put_contents($f, json_encode($s));' "$A/var/lib/offline/peers.json" "$HOLDER_PID"
+  check "a sync that finds another running stands aside" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' sync | grep -q 'already running; skipped'"
+  check "standing aside does not remove the other run's marker" grep -q '"running"' "$A/var/lib/offline/peers.json"
+  check "the health check says a sync is in progress, and what it is fetching" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' doctor | grep -q 'Sync run .*in progress since .*fetching 31 files (88.0 GiB)'"
+  check "status says so too" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' status | grep -q 'A sync is running now' && OFFLINE_PREFIX='$A' '$ROOT/bin/offline' status --json | php -r '\$s = json_decode(stream_get_contents(STDIN), true); exit(is_array(\$s[\"sync\"][\"running\"]) ? 0 : 1);'"
+  kill "$HOLDER_PID" 2>/dev/null; wait "$HOLDER_PID" 2>/dev/null || true
+  refute "a marker left by a run that has died is not believed" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' status | grep -q 'A sync is running now'"
+  check "the health check then says the last run stood aside, and why" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' doctor | grep -q 'Sync run .*did not go ahead: A download or another sync is already running'"
+  check "the next sync clears the dead marker" bash -c "OFFLINE_PREFIX='$A' '$ROOT/bin/offline' sync >/dev/null && ! grep -q '\"running\"' '$A/var/lib/offline/peers.json'"
+  check "noting a contact does not disturb what has been counted" bash -c "OFFLINE_PREFIX='$A' php -r 'define(\"OFFLINE_PREFIX\", getenv(\"OFFLINE_PREFIX\")); require \$argv[1] . \"/lib/cli.php\"; \$before = Offline\\read_json(Offline\\path(\"peers\")); \$key = array_key_first(\$before[\"peers\"]); Offline\\note_peer(\$key, [\"name\" => \"x\", \"method\" => \"server\"], \"ok\"); \$after = Offline\\read_json(Offline\\path(\"peers\")); exit(\$after[\"peers\"][\$key][\"total_files\"] === \$before[\"peers\"][\$key][\"total_files\"] && \$after[\"last_run\"] === \$before[\"last_run\"] && isset(\$after[\"peers\"][\$key][\"last_contact\"]) ? 0 : 1);' '$ROOT'"
+  cp "$WORK/peers.keep" "$A/var/lib/offline/peers.json"
   sed -i 's/^SERVERS=.*/SERVERS=""/' "$A/etc/offline/offline.conf"
 
   # The encrypted port: nothing without the key, and nothing in the clear.
@@ -1176,6 +1288,8 @@ if have curl; then
   offline status --write
   mkdir -p "$A/srv/offline/media/movies/Trips"
   head -c 2000 /dev/urandom >"$A/srv/offline/media/movies/Trips/Gower <2025>.mp4"
+  mkdir -p "$A/srv/offline/media/books/outdoor-cooking/dutch-oven"
+  printf '%%PDF-1.4 a book\n' >"$A/srv/offline/media/books/outdoor-cooking/dutch-oven/geezer-cookbook.pdf"
   mkdir -p "$WORK/site/app" "$WORK/site/public"
   cp -r "$ROOT/portal/app/." "$WORK/site/app/"
   cp -r "$ROOT/portal/public/." "$WORK/site/public/"
@@ -1239,6 +1353,9 @@ if have curl; then
     check "a search with control characters is refused" bash -c "[[ \$(curl -s -o /dev/null -w '%{http_code}' 'http://127.0.0.1:$WEB/places.php?q=%00x') == 400 ]]"
   fi
   refute "directions are not offered without a graph and its engine" bash -c "curl -s 'http://127.0.0.1:$WEB/maps.php' | grep -q 'id=\"route-panel\"'"
+  check "the media browser shows a shelf of books, each a file to open" bash -c "curl -s 'http://127.0.0.1:$WEB/media.php?p=books/outdoor-cooking' | grep -q 'dutch-oven' && curl -s 'http://127.0.0.1:$WEB/media.php?p=books/outdoor-cooking/dutch-oven' | grep -q 'href=\"/files/media/books/outdoor-cooking/dutch-oven/geezer-cookbook.pdf\"'"
+  check "the guide covers books and the outdoor cooking shelf" bash -c "curl -s 'http://127.0.0.1:$WEB/guide.php' | grep -q 'offline books get outdoor-cooking'"
+  refute "children are not shown the books" bash -c "curl -q -s 'http://127.0.0.1:$WEB/media.php?p=books/outdoor-cooking/dutch-oven' | grep -q 'geezer-cookbook'"
   check "the guide covers the vault and the hotspot" bash -c "curl -s 'http://127.0.0.1:$WEB/guide.php' | grep -q 'offline vault open' && curl -s 'http://127.0.0.1:$WEB/guide.php' | grep -q 'offline hotspot on'"
   check "the systems page explains the broadcast" bash -c "curl -s 'http://127.0.0.1:$WEB/peers.php' | grep -q 'offline broadcast --urgent'"
   check "the systems page shows the download queue" bash -c "curl -s 'http://127.0.0.1:$WEB/peers.php' | grep -q 'NHS Health A to Z'"

@@ -11,7 +11,7 @@ declare(strict_types=1);
 
 namespace Offline;
 
-const VERSION = '2.5.0';
+const VERSION = '2.6.0';
 /** The sharing daemon itself, on 127.0.0.1 only. */
 const SYNC_PORT = 47001;
 /** What other systems connect to: the same daemon behind TLS keyed from the house key. */

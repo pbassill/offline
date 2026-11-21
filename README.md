@@ -88,6 +88,9 @@ sudo offline queue add URL ... [--to movies|tv|music|radio|books|children] [--au
 sudo offline queue site NAME|GROUP        archive a website as a library title
 sudo offline queue site URL --name NAME [--pages N]
 sudo offline queue run | archive | remove ID | retry ID
+     offline books [list [SHELF]]         books worth a copy, each held to a checksum
+     offline books show NAME | verify
+sudo offline books get NAME|SHELF|all     fetch them into the shared books folder
      offline stage                        what has been downloaded and awaits release
 sudo offline stage publish ID|all [--to FOLDER] | discard ID
 
@@ -399,6 +402,8 @@ Each system keeps its own list of servers in `SERVERS` and tries all of them at 
 
 `--expose internet` opens the sharing port, and only that port, to any address. The portal, the reader and the media shares carry no sign-in and are confined to the server itself in that mode, whatever else is asked for. SSH stays reachable, rate-limited, so the administrator is not locked out. The server stops announcing itself and stops scanning its local network, because in a datacentre that network belongs to strangers.
 
+The first copy from a server can run for hours, and it says what it is doing while it runs. The moment a server answers and accepts the house key, that is written down; while files are being fetched, `offline doctor`, `offline status`, `offline server` and the portal all report a sync in progress, since when, and what it is fetching; and the totals are added when the run ends. `sudo offline server test` records what it finds in the same place, so a server that has passed its test is shown as one whose key was accepted, with a note that no sync from it has finished yet. A sync that stands aside because a download holds the same lock is reported as having stood aside, with the reason. Each warning in the health check is therefore one of four distinct things: never tried, tried and refused, running now, or held back.
+
 ### The download queue and the staging area
 
 Downloads on a server never land in the shared folders directly. They arrive in `/srv/offline/staging`, which is not shared and is closed to other accounts, and are released from there.
@@ -423,9 +428,36 @@ sudo offline queue site uk
 sudo offline queue site https://example.org/handbook/ --name example.org_en_handbook --pages 800
 ```
 
-The `uk` group in `config/sites.tsv` holds three sites: the Government's *Be Ready* emergency preparedness advice, NHS Health A to Z, and the Highway Code. Each is published under the Open Government Licence v3.0, which permits copying with acknowledgement of the source. The NHS asks that copies be kept current, so that one should be archived again every few months. Additions of your own go in `/etc/offline/sites.local.tsv`.
+The `uk` group in `config/sites.tsv` holds three sites: the Government's *Be Ready* emergency preparedness advice, NHS Health A to Z, and the Highway Code. Each is published under the Open Government Licence v3.0, which permits copying with acknowledgement of the source. The NHS asks that copies be kept current, so that one should be archived again every few months. The `cooking` group is described with the outdoor cooking shelf below, and is on different terms: the note against every line of the list says what they are. Additions of your own go in `/etc/offline/sites.local.tsv`.
 
 A crawl stays beneath the address given, stops at its page limit, fetches two pages at a time, and identifies itself. The result arrives in staging like any other download and joins the library when published. zimit drives a real browser, so it runs in a container pinned by digest, in its own user namespace, with no new privileges, memory and process limits, and one writable folder; a large site takes hours.
+
+### Books, and the outdoor cooking shelf
+
+A library title is a website made portable. A book is a single document, and `offline books` fetches documents by address into `/srv/offline/media/books`, where the portal's media browser shows them and from where every other system receives them at its next sync.
+
+```sh
+offline books
+offline books show geezer-cookbook
+sudo offline books get outdoor-cooking
+sudo offline queue run
+offline books verify
+```
+
+Each line of `config/books.tsv` records an address, the size of the file and its SHA-256. A fetched file is checked against that line when it lands and again at the moment it leaves staging, and a file that differs by a single bit is discarded with the reason recorded in the queue, whichever machine served it. Its type is read from its first bytes and never from its name; a symbolic link is never taken for a book; and only the named file is published, whatever else has found its way into its staging folder. A book that matches its line is published as it arrives, because the review happened when the line was written. `offline books verify` reads every book that is here against its line again, and a book that has been altered since is reported and left for a person to deal with.
+
+The shipped list is one shelf of 39 books and about 340 MiB, `outdoor-cooking`, in four parts. `outdoor-cooking/dutch-oven` is Dutch-oven and one-pot cooking: *The Geezer Cookbook* and its 350 recipes, two manuals of method, and three short books on one-pot meals, light ovens and baking in a pot. `outdoor-cooking/camp-cookbooks` is recipes cooked by Scout troops in camp, the 359-page *Soaring Eagle District Cookbook* among them. `outdoor-cooking/classics` is the old masters, from Maria Parloa in 1878 to Horace Kephart's *Camp Cookery* and Daniel Beard in 1920. `outdoor-cooking/field-kitchens` is cooking for numbers over open fires: the British *Manual of Military Cooking* of 1910 and 1915, two American army manuals, the Forest Service's *Camp Stoves and Fireplaces*, and eight radio talks on campfire meals and pit barbecue from the United States Department of Agriculture.
+
+The rights column of the list says what stands behind each line. Twenty-six books are `pd`, in the public domain by age or as the work of a government. Eight are `cc`, under a Creative Commons licence given by their author or editor. Five are `marked`: the person who placed them in the Internet Archive marked them as free to copy, and nothing in the documents themselves confirms it, so each is a copy for your own household and not for passing on. Many of the files are the Internet Archive's own PDF of a scanned book, which the Archive may one day regenerate; such a book then fails its check, safely, until its line is brought up to date.
+
+Additions of your own go in `/etc/offline/books.local.tsv`, where a line may also replace a shipped one. There alone the checksum and the size may each be a hyphen, for a document whose checksum cannot be known beforehand. Such a book is checked for its type and nothing else, and waits in staging for an adult to release it.
+
+Two more things complete the shelf. The `outdoor-cooking` pack is what Kiwix publishes ready-made that bears on cooking over fire, about 570 MiB: the cooking and outdoors questions and answers, three recipe collections that are free to copy, a set of one-pot recipes from a small boat, and ScoutWiki. `outdoor-cooking-extra` adds the two large open collections, about 13 GiB between them: Wikibooks, for its Cookbook, and every Project Gutenberg book classed under technology, which is where Gutenberg files cookery and with it the old camp cookery manuals. The `cooking` group of `config/sites.tsv` then names seven recipe sites for a server to archive. One is the United States National Park Service. The other six are ordinary copyrighted sites whose owners have granted nothing, and the list says so against each: a copy of one is for your own household's use, to be read when the site cannot be reached.
+
+```sh
+sudo offline get outdoor-cooking
+sudo offline queue site cooking
+```
 
 ## Family broadcast
 
@@ -507,8 +539,9 @@ lib/auth.php                  account records, password hashes, portal sessions 
 lib/users.php                 the user and tls commands: login accounts, replication, the household certificate authority
 lib/rebuild.php               the package cache, installer images, and export and import by disc
 lib/server.php                central servers, the download queue, staging and site archiving
+lib/books.php                 the books command: documents fetched by address and held to a recorded checksum
 lib/broadcast.php             family broadcast: signing, delivery, the mesh and the desktop alert
-config/                       settings, catalogues, sites to archive, rsync, stunnel, Apache, PHP-FPM, mDNS, radio channel files,
+config/                       settings, catalogues, sites to archive, books to fetch, rsync, stunnel, Apache, PHP-FPM, mDNS, radio channel files,
                               the routing engine's unit, the package list and the package cache detector
 desktop/                      the desktop alert agent, the dialog that sends a broadcast, and their launchers
 apps/                         one hardened Podman unit per application, and their index
