@@ -1,0 +1,302 @@
+/*
+ * Offline portal: the children's pages.
+ *
+ * Loaded on top of offline.css for anyone who has not signed in. The same
+ * three themes apply. The pages are made for a seven-year-old with a tablet:
+ * few words, big targets, and one colour for each of the five things there
+ * are to do, so that a door can be found again by its colour before it can
+ * be found by reading.
+ */
+
+.kids {
+  --k-play: #b93f0b;
+  --k-watch: #6a2bc9;
+  --k-read: #0b6767;
+  --k-make: #b3175a;
+  --k-maps: #1b4fcf;
+  --k-door-ink: #ffffff;
+  --k-round: 1.25rem;
+  --k-display: ui-rounded, "SF Pro Rounded", "Arial Rounded MT Bold", "Ubuntu", system-ui, sans-serif;
+  font-size: 1.1875rem;
+}
+
+[data-theme="dark"] .kids {
+  --k-play: #ffb38a;
+  --k-watch: #c9adff;
+  --k-read: #7fdccf;
+  --k-make: #ff9cc4;
+  --k-maps: #9dbcff;
+  --k-door-ink: #10171c;
+}
+
+[data-theme="vt100"] .kids {
+  --k-play: #3dff7f;
+  --k-watch: #3dff7f;
+  --k-read: #3dff7f;
+  --k-make: #3dff7f;
+  --k-maps: #3dff7f;
+  --k-door-ink: #000000;
+  --k-round: 0;
+  --k-display: var(--o-font);
+}
+
+.kids h1,
+.kids h2,
+.kids .navbar-brand,
+.kids .masthead .nav-link {
+  font-family: var(--k-display);
+}
+
+/* The masthead: five places to go, each large enough for a thumb. */
+.kids .masthead .nav-link {
+  font-size: 1.125rem;
+  font-weight: 700;
+  padding: 0.6rem 0.9rem;
+}
+
+.kids .masthead .nav-link i {
+  display: inline-block;
+}
+
+.kids .brand-host {
+  display: none;
+}
+
+.kids .account-link {
+  font-size: 0.875rem;
+  color: var(--o-muted);
+}
+
+.kids-hello {
+  margin: 2rem 0 1.25rem;
+}
+
+.kids-hello h1 {
+  font-size: clamp(1.9rem, 4.5vw, 3rem);
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+
+/* The doors. Play is the widest: it is where most visits are going. */
+.doors {
+  list-style: none;
+  margin: 0 0 3rem;
+  padding: 0;
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(6, 1fr);
+}
+
+.door {
+  grid-column: span 2;
+}
+
+.door-play {
+  grid-column: span 4;
+}
+
+.door-watch {
+  grid-column: span 2;
+}
+
+.door > a,
+.door > div {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  min-height: 12.5rem;
+  height: 100%;
+  padding: 1.4rem 1.5rem;
+  overflow: hidden;
+  border-radius: var(--k-round);
+  background: var(--door);
+  color: var(--k-door-ink);
+  text-decoration: none;
+}
+
+.door-play { --door: var(--k-play); }
+.door-watch { --door: var(--k-watch); }
+.door-read { --door: var(--k-read); }
+.door-make { --door: var(--k-make); }
+.door-maps { --door: var(--k-maps); }
+
+.door-label {
+  font-family: var(--k-display);
+  font-size: clamp(1.9rem, 3.4vw, 2.6rem);
+  font-weight: 800;
+  line-height: 1.1;
+}
+
+.door-line {
+  max-width: 16rem;
+  margin-top: 0.4rem;
+  font-size: 1.0625rem;
+  line-height: 1.35;
+}
+
+.door-icon {
+  position: absolute;
+  right: -0.6rem;
+  bottom: -1.1rem;
+  font-size: 8.5rem;
+  opacity: 0.22;
+  transform: rotate(-8deg);
+}
+
+.door > a:hover .door-icon,
+.door > a:focus-visible .door-icon {
+  opacity: 0.42;
+}
+
+.door > a:focus-visible {
+  outline: 0.3rem solid var(--o-ink);
+  outline-offset: 0.2rem;
+}
+
+.door-closed > div {
+  background: transparent;
+  border: 0.2rem dashed var(--o-rule);
+  color: var(--o-muted);
+}
+
+[data-theme="vt100"] .door > a,
+[data-theme="vt100"] .door > div {
+  background: #000000;
+  border: 2px solid var(--o-ink);
+  color: var(--o-ink);
+}
+
+[data-theme="vt100"] .door > a:hover,
+[data-theme="vt100"] .door > a:focus-visible {
+  background: var(--o-ink);
+  color: #000000;
+  outline: none;
+}
+
+[data-theme="vt100"] .door-icon {
+  transform: none;
+  opacity: 0.5;
+}
+
+/* The shelf: one book to a row of the grid, the title large. */
+.shelf {
+  list-style: none;
+  margin: 0 0 3rem;
+  padding: 0;
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fill, minmax(17rem, 1fr));
+}
+
+.shelf > li > a,
+.shelf > li > div {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 0.9rem;
+  align-items: start;
+  height: 100%;
+  padding: 1.1rem 1.2rem;
+  border: 1px solid var(--o-rule);
+  border-left: 0.5rem solid var(--k-read, var(--o-accent));
+  border-radius: var(--o-radius);
+  background: var(--o-surface);
+  color: var(--o-ink);
+  text-decoration: none;
+}
+
+.shelf > li > a:hover,
+.shelf > li > a:focus-visible {
+  border-color: var(--k-read, var(--o-accent));
+}
+
+.shelf-icon {
+  grid-row: span 2;
+  margin-top: 0.2rem;
+  font-size: 1.6rem;
+  color: var(--k-read, var(--o-accent));
+}
+
+.shelf-title {
+  font-size: 1.25rem;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.shelf-line {
+  color: var(--o-muted);
+  font-size: 0.95rem;
+}
+
+/* Rows of films and folders: taller, so that a finger lands on one at a time. */
+.kids .rows > li {
+  min-height: 4rem;
+}
+
+.kids .rows .row-title {
+  font-size: 1.2rem;
+  font-weight: 700;
+}
+
+.kids .page-head h1 {
+  font-size: clamp(1.8rem, 4vw, 2.5rem);
+  font-weight: 800;
+}
+
+@media (max-width: 991.98px) {
+  .doors {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .door,
+  .door-watch {
+    grid-column: span 1;
+  }
+
+  .door-play {
+    grid-column: span 2;
+  }
+
+  .door > a,
+  .door > div {
+    min-height: 10rem;
+  }
+
+  .door-icon {
+    font-size: 6.5rem;
+  }
+}
+
+@media (max-width: 479.98px) {
+  .doors {
+    grid-template-columns: 1fr;
+  }
+
+  .door,
+  .door-play,
+  .door-watch {
+    grid-column: span 1;
+  }
+}
+
+/* The colour switch keeps its three symbols and drops its words, so that the five places fit on a tablet. */
+.kids .theme-switch .btn {
+  font-size: 0;
+  padding: 0.4rem 0.6rem;
+}
+
+.kids .theme-switch .btn i {
+  font-size: 1rem;
+}
+
+/* In the terminal theme the picture is drawn in the same green as the words, so it keeps clear of them. */
+[data-theme="vt100"] .door-icon {
+  font-size: 5.5rem;
+  right: 0.6rem;
+  bottom: 0.4rem;
+  opacity: 0.35;
+}
+
+[data-theme="vt100"] .door-line {
+  max-width: 58%;
+}

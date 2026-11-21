@@ -4,7 +4,13 @@
  *
  * The portal is read-only: it renders the status file written by the
  * offline-status timer and lists files under /srv/offline. It accepts GET and
- * HEAD only, keeps no session, sets no cookie and runs no other program.
+ * HEAD only and runs no other program.
+ *
+ * What it shows depends on who is looking. Without an adult's session it shows
+ * the children's pages and nothing else; every page not listed as public below
+ * sends the visitor to sign in. These pages can read a session and cannot open
+ * one: signing in and out belong to the pages under /account/, which run in a
+ * PHP pool of their own.
  */
 
 declare(strict_types=1);
@@ -26,10 +32,55 @@ header('Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()
 header('Cache-Control: no-store');
 header('Content-Type: text/html; charset=UTF-8');
 
-if (!in_array($_SERVER['REQUEST_METHOD'] ?? 'GET', ['GET', 'HEAD'], true)) {
+if (!in_array($_SERVER['REQUEST_METHOD'] ?? 'GET', defined('PORTAL_ALLOW_POST') ? ['GET', 'HEAD', 'POST'] : ['GET', 'HEAD'], true)) {
     http_response_code(405);
     header('Allow: GET, HEAD');
     exit;
+}
+
+/** Pages anyone in the house may open. Every other page is for adults who have signed in. */
+const PORTAL_PUBLIC_PAGES = ['index', 'games', 'media', 'play', 'read', 'maps', 'places', 'alerts', 'signin', 'signout'];
+
+/**
+ * The adult who is signed in, or null. The session cookie is one that browsers
+ * send over HTTPS only, and it is not looked at on any other connection.
+ */
+function portal_session(): ?array
+{
+    static $session = false;
+    if ($session === false) {
+        $session = ($_SERVER['HTTPS'] ?? '') === 'on' ? Offline\session_lookup(is_string($_COOKIE[Offline\SESSION_COOKIE] ?? null) ? $_COOKIE[Offline\SESSION_COOKIE] : null) : null;
+    }
+    return $session;
+}
+
+function portal_is_adult(): bool
+{
+    return portal_session() !== null;
+}
+
+/** The sign-in page on the encrypted site, coming back to this page afterwards. */
+function portal_signin_url(?string $next = null): string
+{
+    $next ??= (string) ($_SERVER['REQUEST_URI'] ?? '/');
+    if (preg_match('/^\/[A-Za-z0-9._~\/?=&%+-]{0,300}$/', $next) !== 1 || str_starts_with($next, '//')) {
+        $next = '/';
+    }
+    return 'https://' . portal_host() . '/account/signin.php' . ($next === '/' ? '' : '?next=' . rawurlencode($next));
+}
+
+/** Stop here unless an adult is signed in. */
+function portal_require_adult(): void
+{
+    if (!portal_is_adult()) {
+        header('Location: ' . portal_signin_url(), true, 302);
+        exit;
+    }
+}
+
+// A page is for adults unless it is on the list: a page added later and forgotten here is closed, not open.
+if (!in_array(basename((string) ($_SERVER['SCRIPT_NAME'] ?? ''), '.php'), PORTAL_PUBLIC_PAGES, true)) {
+    portal_require_adult();
 }
 
 /** Escape text for HTML. Every value that reaches a page goes through this. */
@@ -81,9 +132,15 @@ function portal_host(): string
     return filter_var($address, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) !== false ? $address : '127.0.0.1';
 }
 
-function reader_url(string $zimFile = ''): string
+/**
+ * The reader for whoever is looking: the whole library for an adult, over
+ * TLS; the children's shelf, which holds nothing else, for everyone.
+ */
+function reader_url(string $zimFile = '', ?bool $adult = null): string
 {
-    $base = 'http://' . portal_host() . ':' . Offline\READER_PORT . '/';
+    $base = ($adult ?? portal_is_adult())
+        ? 'https://' . portal_host() . ':' . Offline\READER_ADULT_PORT . '/'
+        : 'http://' . portal_host() . ':' . Offline\READER_PORT . '/';
     return $zimFile === '' ? $base : $base . 'content/' . rawurlencode(preg_replace('/\.zim$/i', '', $zimFile) ?? '');
 }
 
@@ -127,11 +184,19 @@ function page_start(string $title, string $active, array $extraStyles = []): voi
 {
     $status = portal_status();
     $host = (string) ($status['host']['name'] ?? gethostname());
-    $nav = [
+    $session = portal_session();
+    $kids = $session === null;
+    $nav = $kids ? [
+        'index' => ['Home', 'fa-house'], 'games' => ['Play', 'fa-gamepad'], 'media' => ['Watch', 'fa-film'],
+        'read' => ['Read', 'fa-book-open'], 'maps' => ['Maps', 'fa-map-location-dot'],
+    ] : [
         'index' => ['Overview', 'fa-gauge'], 'library' => ['Library', 'fa-book-open'], 'media' => ['Media', 'fa-film'],
         'maps' => ['Maps', 'fa-map-location-dot'], 'apps' => ['Apps', 'fa-table-cells-large'], 'games' => ['Games', 'fa-gamepad'], 'radio' => ['Radio', 'fa-tower-broadcast'],
         'peers' => ['Systems', 'fa-network-wired'], 'guide' => ['Guide', 'fa-circle-question'],
     ];
+    if ($kids) {
+        $extraStyles[] = '/assets/css/kids.css';
+    }
     ?>
 <!doctype html>
 <html lang="en-GB" data-bs-theme="light" data-theme="light">
@@ -151,9 +216,9 @@ function page_start(string $title, string $active, array $extraStyles = []): voi
 <script src="/assets/js/theme.js"></script>
 <script src="/assets/bootstrap/bootstrap.bundle.min.js" defer></script>
 </head>
-<body>
+<body class="<?= $kids ? 'kids' : 'grown-up' ?>">
 <a class="visually-hidden-focusable skip-link" href="#content">Skip to content</a>
-<nav class="navbar navbar-expand-xl masthead" aria-label="Main">
+<nav class="navbar <?= $kids ? 'navbar-expand-lg' : 'navbar-expand-xl' ?> masthead" aria-label="Main">
   <div class="container-xl">
     <a class="navbar-brand" href="/"><i class="fa-solid fa-book-atlas" aria-hidden="true"></i> Offline <span class="brand-host"><?= e($host) ?></span></a>
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#mainnav" aria-controls="mainnav" aria-expanded="false" aria-label="Show menu"><i class="fa-solid fa-bars" aria-hidden="true"></i></button>
@@ -168,6 +233,11 @@ function page_start(string $title, string $active, array $extraStyles = []): voi
         <button type="button" class="btn btn-sm" data-set-theme="dark" aria-pressed="false"><i class="fa-solid fa-moon" aria-hidden="true"></i> Dark</button>
         <button type="button" class="btn btn-sm" data-set-theme="vt100" aria-pressed="false"><i class="fa-solid fa-terminal" aria-hidden="true"></i> VT100</button>
       </div>
+<?php if ($kids) : ?>
+      <a class="btn btn-sm account-link" href="<?= e(portal_signin_url($active === 'signin' ? '/' : null)) ?>"><i class="fa-solid fa-key" aria-hidden="true"></i> Grown-ups</a>
+<?php else : ?>
+      <a class="btn btn-sm account-link" href="/account/signout.php" title="Signed in as <?= e($session['user']) ?>"><i class="fa-solid fa-right-from-bracket" aria-hidden="true"></i> Sign out <span class="account-name"><?= e($session['user']) ?></span></a>
+<?php endif; ?>
     </div>
   </div>
 </nav>
@@ -186,6 +256,9 @@ function page_start(string $title, string $active, array $extraStyles = []): voi
 <main id="content" class="container-xl">
 <?php
     $generated = strtotime((string) ($status['generated'] ?? ''));
+    if ($kids) {
+        return;
+    }
     if ($status === []) {
         echo '<div class="notice notice-warn" role="status"><i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i> No status has been recorded yet. Start it with <code>sudo systemctl start offline-status.service</code>.</div>';
     } elseif ($generated !== false && time() - $generated > 600) {

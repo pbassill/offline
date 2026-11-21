@@ -39,10 +39,12 @@ kiwix-tools
 libnotify-bin
 libnss-mdns
 luanti
+malcontent
 minetest
 multimon-ng
 netavark
 network-manager
+nftables
 openssl
 php-cli
 php-fpm

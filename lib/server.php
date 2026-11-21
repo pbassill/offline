@@ -20,7 +20,7 @@ namespace Offline;
 /** openzim/zimit, the Kiwix project's own tool for turning a website into a ZIM file. Pinned by digest. */
 const ZIMIT_IMAGE = 'ghcr.io/openzim/zimit:3.1.3@sha256:264d386152a0527d75b562298193d27c7f318ee58eb5191940dc12ad0a1b121b';
 const ZIMIT_UID_BASE = 2700000;
-const MEDIA_FOLDERS = ['movies', 'tv', 'music', 'radio', 'books'];
+const MEDIA_FOLDERS = ['movies', 'tv', 'music', 'radio', 'books', 'children'];
 
 // ---------------------------------------------------------------------------
 // Servers
@@ -391,7 +391,7 @@ function command_queue(array $args): int
             ], $items));
         }
         out();
-        out('Add with: sudo offline queue add URL [--to movies|tv|music|radio|books] [--audio]');
+        out('Add with: sudo offline queue add URL [--to movies|tv|music|radio|books|children] [--audio]');
         out('          sudo offline queue site NAME|GROUP   (see: offline queue sites)');
         return 0;
     }

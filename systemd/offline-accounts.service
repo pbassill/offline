@@ -1,0 +1,38 @@
+# Brings this system's login accounts into line with the household's account
+# records, whenever the records change and at every start. It is the one job
+# that acts as root on what another system sent, so it is given no network, a
+# bounded set of capabilities, and records that have each been checked for
+# shape before a single one is used. It never grants administrator rights and
+# never touches an account that has them.
+[Unit]
+Description=Offline: bring login accounts into line with the household's accounts
+Documentation=https://github.com/pbassill/offline
+ConditionPathExists=/var/lib/offline/accounts/accounts.json
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/offline user apply --replicated
+
+# The account files and home folders are all this job may write.
+ProtectSystem=strict
+ReadWritePaths=/etc /home -/var/log -/var/mail
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_UNIX AF_NETLINK
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+CapabilityBoundingSet=CAP_CHOWN CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH CAP_FOWNER CAP_FSETID CAP_AUDIT_WRITE
+IPAddressDeny=any
+
+[Install]
+WantedBy=multi-user.target

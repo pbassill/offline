@@ -106,3 +106,9 @@ tech-extra	serverfault.com_en_all	Server Fault	Questions and answers on system a
 tech-extra	security.stackexchange.com_en_all	Information Security Q&A	Questions and answers on security practice.	0
 tech-extra	archlinux_en_all_maxi	Arch Linux wiki	Thorough Linux documentation that applies well beyond Arch.	34
 tech-extra	devdocs_en_php	PHP documentation	The PHP manual from DevDocs.	0
+children	vikidia_en_all_maxi	Vikidia	An encyclopaedia written for readers of eight to thirteen.	74
+children	phet_en_all	PhET simulations	Interactive science and mathematics simulations from the University of Colorado.	104
+children	prunelle_en_interactive-books	Prunelle books	Interactive picture books.	359
+children	ted_mul_kids	TED for children	TED talks chosen for children.	3789
+children-extra	booksdash_en_all	Book Dash	Picture books for young children, free to copy.	11162
+children-extra	ted_mul_ted-ed	TED-Ed	Animated lessons on science, history and language.	6042

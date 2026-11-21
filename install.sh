@@ -15,7 +15,7 @@ set -Eeuo pipefail
 IFS=$'\n\t'
 umask 022
 
-readonly OFFLINE_VERSION="2.3.0"
+readonly OFFLINE_VERSION="2.4.0"
 readonly SHARE_ROOT="/srv/offline"
 readonly STATE_DIR="/var/lib/offline"
 readonly CONF_DIR="/etc/offline"
@@ -48,6 +48,7 @@ OPT_APPS=""
 OPT_RADIO=""
 OPT_DRY_RUN=no
 OPT_SCOPE=""
+OPT_DESKTOP=""
 OPT_KEY=""
 OPT_PACKS=""
 OPT_MODELS=""
@@ -70,9 +71,13 @@ Offline installer $OFFLINE_VERSION
 
 Usage: sudo ./install.sh [options]
 
-  --role ROLE          workstation (default): a laptop or desktop people sit at
+  --role ROLE          workstation (default): a laptop or desktop that adults
+                       and children sit at
                        server: a central system that downloads, stages and
-                       serves content to the others; no desktop applications
+                       serves content to the others, with everything installed
+  --headless           a server with no screen: leave out the desktop programs
+  --desktop            a server that people also sit at (the default where a
+                       desktop is already installed)
   --server HOST[:PORT] pull from this central server; repeat for several, for
                        example one at home and one in a datacentre
   --expose internet    on a server, accept other systems from any address rather
@@ -80,8 +85,7 @@ Usage: sudo ./install.sh [options]
   --packs "A B"        download these content packs at the end (see: offline catalogue)
   --maps "A B"         download these map regions at the end (see: offline maps)
   --apps "A B"         applications to install: names, "all" (the whole Project
-                       NOMAD set; default on a workstation) or "none" (default
-                       on a server) (see: offline apps)
+                       NOMAD set; the default) or "none" (see: offline apps)
   --no-games           skip the children's games
   --host-games         host the family Luanti worlds and the browser activities here
                        (default on a server on the home network)
@@ -90,8 +94,6 @@ Usage: sudo ./install.sh [options]
   --apt-cache HOST     fetch Ubuntu packages through the household's package cache
                        on HOST; this is how a system is rebuilt with no internet
   --no-radio           skip the radio tools (SDR, Meshtastic, handset programming)
-  --with-radio         install the radio tools on a server
-  --with-ai            install Ollama on a server
   --key KEY            join an existing household by entering its house key
                        (or leave it out and run "sudo offline key set" afterwards,
                        which keeps the key off the command line)
@@ -227,6 +229,19 @@ create_accounts() {
   if ! getent passwd offline-web >/dev/null; then
     adduser --system --group --home /nonexistent --no-create-home --shell /usr/sbin/nologin offline-web
   fi
+  # The sign-in pages run as an account of their own, which alone may open a
+  # portal session. The web server and the portal pages read sessions through
+  # the offline-session group.
+  getent group offline-session >/dev/null || addgroup --system offline-session
+  if ! getent passwd offline-auth >/dev/null; then
+    adduser --system --group --home /nonexistent --no-create-home --shell /usr/sbin/nologin offline-auth
+  fi
+  usermod -aG offline-session offline-auth
+  usermod -aG offline-session www-data
+  usermod -aG offline-session offline-web
+  # Every child's login account has this group and no other; the children's
+  # guard, the content folders and the SSH daemon all recognise it.
+  getent group offline-child >/dev/null || addgroup --system offline-child
   # The desktop user may add and remove content; nothing more.
   usermod -aG offline "$TARGET_USER"
 }
@@ -239,6 +254,8 @@ create_directories() {
     maps radio radio/firmware; do
     install -d -m 2775 -o offline -g offline "$SHARE_ROOT/$dir"
   done
+  # What is put in this folder can be watched by everyone in the house without signing in.
+  install -d -m 2775 -o offline -g offline "$SHARE_ROOT/media/children"
   # Downloads wait here until published. Not shared, and closed to other accounts.
   install -d -m 2770 -o offline -g offline "$SHARE_ROOT/staging"
   # Family broadcasts: signed ones kept and offered to other systems, those pushed
@@ -258,6 +275,16 @@ create_directories() {
   # Application data belongs to the applications' own user ranges, not to the sharing account.
   install -d -m 0755 -o root -g root "$SHARE_ROOT/apps"
   install -d -m 0700 -o root -g root "$CONF_DIR/apps"
+  # Account records: readable by the sharing account, which offers them to the
+  # household's other systems, and by the sign-in pages. Nobody else: not the
+  # web server, and not the ordinary portal pages.
+  install -d -m 2750 -o offline -g offline-auth "$STATE_DIR/accounts"
+  # A child's login account uses the portal like any tablet does, and has no
+  # business in the folders themselves: the library and the films are closed to
+  # the children's group by name, whatever the folders allow everyone else.
+  if command -v setfacl >/dev/null 2>&1; then
+    setfacl -m g:offline-child:---,m::rwx "$SHARE_ROOT/knowledge" "$SHARE_ROOT/media" "$SHARE_ROOT/radio" "$SHARE_ROOT/rebuild" || true
+  fi
   install -m 0644 "$SCRIPT_DIR/config/tmpfiles-offline.conf" /etc/tmpfiles.d/offline.conf
   systemd-tmpfiles --create /etc/tmpfiles.d/offline.conf
 }
@@ -297,7 +324,8 @@ migrate_layout() {
 install_tools() {
   install -m 0755 -o root -g root "$SCRIPT_DIR/bin/offline" /usr/local/bin/offline
   install -m 0644 -o root -g root "$SCRIPT_DIR"/lib/*.php "$SCRIPT_DIR/config/catalogue.tsv" "$SCRIPT_DIR/config/maps.tsv" \
-    "$SCRIPT_DIR/config/sites.tsv" "$SCRIPT_DIR/config/packages.list" "$SCRIPT_DIR/config/offline-routing.container" "$LIB_DIR/"
+    "$SCRIPT_DIR/config/sites.tsv" "$SCRIPT_DIR/config/packages.list" "$SCRIPT_DIR/config/offline-routing.container" \
+    "$SCRIPT_DIR/config/children.tsv" "$SCRIPT_DIR/config/children-guard.nft" "$LIB_DIR/"
   install -m 0755 -o root -g root "$SCRIPT_DIR/config/apt-proxy-detect" "$LIB_DIR/apt-proxy-detect"
   # Games: the list, the family-world units and their settings.
   rsync --recursive --delete --chmod=D755,F644 --chown=root:root "$SCRIPT_DIR/games/" "$LIB_DIR/games/"
@@ -322,6 +350,10 @@ install_tools() {
   if [[ "$EXPOSE" == internet ]]; then
     # A system in a datacentre must not go looking through its neighbours' addresses.
     conf_set SYNC_SCAN_FALLBACK no
+  fi
+  if [[ ! -e "$CONF_DIR/children.local.tsv" ]]; then
+    printf '# Your own additions to the children'"'"'s shelf: the start of a ZIM file name, a tab, a note.\n# Run "sudo offline library" after changing this file.\n' >"$CONF_DIR/children.local.tsv"
+    chmod 0644 "$CONF_DIR/children.local.tsv"
   fi
   if [[ ! -e "$CONF_DIR/sites.local.tsv" ]]; then
     printf '# Your own websites to archive. Columns separated by single tabs:\n# id\tgroup\taddress\tZIM name\ttitle\tpage limit\tnote\n' >"$CONF_DIR/sites.local.tsv"
@@ -352,7 +384,7 @@ install_units() {
 # Written by the Offline installer: PORTAL_SCOPE=local.
 [Service]
 ExecStart=
-ExecStart=/usr/bin/kiwix-serve --address=127.0.0.1 --port=8080 --monitorLibrary --blockexternal --library /var/lib/offline/library.xml
+ExecStart=/usr/bin/kiwix-serve --address=127.0.0.1 --port=8080 --monitorLibrary --blockexternal --library /var/lib/offline/library-children.xml
 IPAddressAllow=
 IPAddressAllow=localhost
 EOF
@@ -434,10 +466,14 @@ configure_firewall() {
     fi
     if [[ "$SCOPE" == lan ]]; then
       ufw allow from "$net" to any port 80 proto tcp comment 'Offline portal'
-      ufw allow from "$net" to any port 8080 proto tcp comment 'Offline library reader'
+      ufw allow from "$net" to any port 443 proto tcp comment 'Offline portal, encrypted, with sign-in'
+      ufw allow from "$net" to any port 8080 proto tcp comment 'Offline children'"'"'s shelf'
+      ufw allow from "$net" to any port 8443 proto tcp comment 'Offline library for adults who have signed in'
     else
       ufw delete allow from "$net" to any port 80 proto tcp >/dev/null 2>&1 || true
+      ufw delete allow from "$net" to any port 443 proto tcp >/dev/null 2>&1 || true
       ufw delete allow from "$net" to any port 8080 proto tcp >/dev/null 2>&1 || true
+      ufw delete allow from "$net" to any port 8443 proto tcp >/dev/null 2>&1 || true
     fi
   done
   # Do not lock out an administrator who manages this system over SSH. A server
@@ -480,7 +516,13 @@ configure_webserver() {
   [[ -d "$pool_dir" ]] || { echo "PHP-FPM $php_version is not installed ($pool_dir is missing)"; return 1; }
 
   install -m 0644 -o root -g root "$SCRIPT_DIR/config/php-fpm-offline-portal.conf" "$pool_dir/offline-portal.conf"
+  install -m 0644 -o root -g root "$SCRIPT_DIR/config/php-fpm-offline-auth.conf" "$pool_dir/offline-auth.conf"
   install -m 0644 -o root -g root "$SCRIPT_DIR/config/apache-offline-portal.conf" /etc/apache2/sites-available/offline-portal.conf
+  install -d -m 0755 -o root -g root /etc/apache2/offline
+  install -m 0644 -o root -g root "$SCRIPT_DIR/config/apache-offline-portal-common.conf" /etc/apache2/offline/portal-common.conf
+  install -m 0644 -o root -g root "$SCRIPT_DIR/config/apache-offline-session-gate.conf" /etc/apache2/offline/session-gate.conf
+  # The encrypted site needs this system's certificate, signed by the household's authority.
+  /usr/local/bin/offline tls renew >/dev/null || { echo "This system's certificate could not be made"; return 1; }
   install -m 0644 -o root -g root "$SCRIPT_DIR/config/apache-offline-hardening.conf" /etc/apache2/conf-available/zz-offline-hardening.conf
   if [[ "$SCOPE" == lan ]]; then
     printf '# Written by the Offline installer: PORTAL_SCOPE=lan.\nDefine OFFLINE_LAN\n' >/etc/apache2/conf-available/offline-scope.conf
@@ -488,7 +530,7 @@ configure_webserver() {
     printf '# Written by the Offline installer: PORTAL_SCOPE=local.\n' >/etc/apache2/conf-available/offline-scope.conf
   fi
 
-  a2enmod -q headers proxy proxy_fcgi setenvif
+  a2enmod -q headers proxy proxy_fcgi proxy_http setenvif ssl rewrite
   a2dismod -q -f status autoindex cgi cgid 2>/dev/null || true
   a2dissite -q 000-default 2>/dev/null || true
   a2enconf -q zz-offline-hardening offline-scope
@@ -507,10 +549,28 @@ configure_webserver() {
 start_services() {
   # The reader needs an index to start; build an empty one on first install.
   /usr/local/bin/offline library
-  systemctl enable offline-rsync.service offline-tls.service offline-reader.service offline-peer-sync.timer offline-status.timer \
-    offline-library.path offline-broadcast.path offline-broadcast-poll.timer
-  systemctl restart offline-rsync.service offline-tls.service offline-reader.service
-  systemctl restart offline-peer-sync.timer offline-status.timer offline-library.path offline-broadcast.path offline-broadcast-poll.timer
+  systemctl enable offline-rsync.service offline-tls.service offline-reader.service offline-reader-adults.service offline-peer-sync.timer \
+    offline-status.timer offline-library.path offline-broadcast.path offline-broadcast-poll.timer offline-sessions.timer \
+    offline-tls-renew.timer offline-accounts.path offline-accounts.service offline-children-guard.service
+  systemctl restart offline-rsync.service offline-tls.service offline-reader.service offline-reader-adults.service
+  systemctl restart offline-peer-sync.timer offline-status.timer offline-library.path offline-broadcast.path offline-broadcast-poll.timer \
+    offline-sessions.timer offline-tls-renew.timer offline-accounts.path
+  # The children's guard confines child accounts whether or not any exist yet.
+  systemctl restart offline-children-guard.service
+  # Children do not log in over the network, on any system.
+  if [[ -d /etc/ssh/sshd_config.d ]]; then
+    printf '%s\n' '# Written by the Offline installer: child accounts log in at a screen, never over SSH.' 'DenyGroups offline-child' \
+      >/etc/ssh/sshd_config.d/60-offline-children.conf
+    chmod 0644 /etc/ssh/sshd_config.d/60-offline-children.conf
+    if sshd -t 2>/dev/null; then
+      systemctl reload ssh.service 2>/dev/null || true
+    else
+      rm -f /etc/ssh/sshd_config.d/60-offline-children.conf
+      echo "The SSH daemon rejected the rule that keeps child accounts out; it was withdrawn."
+    fi
+  fi
+  # Accounts made on other systems, or before this upgrade.
+  /usr/local/bin/offline user apply --replicated || true
   # Only a server works through a download queue unattended.
   if [[ "$ROLE" == server ]]; then
     systemctl enable --now offline-queue.timer offline-archive.timer
@@ -728,6 +788,8 @@ while (($# > 0)); do
     --no-games) OPT_GAMES=no; shift ;;
     --host-games) OPT_HOST_GAMES=yes; shift ;;
     --hotspot) OPT_HOTSPOT=yes; shift ;;
+    --headless) OPT_DESKTOP=no; shift ;;
+    --desktop) OPT_DESKTOP=yes; shift ;;
     --apt-cache) OPT_APT_CACHE="${2:?--apt-cache needs a host}"; shift 2 ;;
     --role) OPT_ROLE="${2:?--role needs a value}"; shift 2 ;;
     --server) OPT_SERVERS+=("${2:?--server needs a value}"); shift 2 ;;
@@ -848,26 +910,36 @@ for server in "${OPT_SERVERS[@]:-}"; do
     die "--server takes a host name or IPv4 address, optionally with a port; \"$server\" is neither."
 done
 
-# What a workstation gets by default, a server gets only when asked.
+# A workstation is sat at by definition. A server may be: it has the desktop
+# programs if it has a desktop, which can be said outright or is found out.
+if [[ "$ROLE" == workstation ]]; then
+  DESKTOP=yes
+elif [[ -n "$OPT_DESKTOP" ]]; then
+  DESKTOP="$OPT_DESKTOP"
+elif [[ -x /usr/sbin/gdm3 || -x /usr/bin/sddm || -x /usr/sbin/lightdm || -x /usr/bin/gnome-shell ]]; then
+  DESKTOP=yes
+else
+  DESKTOP=no
+fi
+readonly DESKTOP
+# Every role has everything; what a desktop is needed for goes where there is one.
 WHY_NO_RADIO="--no-radio"
 WHY_NO_AI="--no-ai"
 WHY_NO_APPS="--apps none"
-if [[ "$ROLE" == server ]]; then
-  [[ -n "$OPT_RADIO" ]] || WHY_NO_RADIO="a server gets them only with --with-radio"
-  [[ -n "$OPT_AI" ]] || WHY_NO_AI="a server gets them only with --with-ai"
-  [[ -n "$OPT_APPS" ]] || WHY_NO_APPS="a server gets them only with --apps"
-  : "${OPT_AI:=no}" "${OPT_MSTY:=no}" "${OPT_JDOWNLOADER:=no}" "${OPT_APPS:=none}" "${OPT_RADIO:=no}"
+: "${OPT_AI:=yes}" "${OPT_JDOWNLOADER:=yes}" "${OPT_APPS:=all}" "${OPT_RADIO:=yes}"
+if [[ "$DESKTOP" == yes ]]; then
+  : "${OPT_MSTY:=yes}" "${OPT_GAMES:=yes}"
 else
-  : "${OPT_AI:=yes}" "${OPT_MSTY:=yes}" "${OPT_JDOWNLOADER:=yes}" "${OPT_APPS:=all}" "${OPT_RADIO:=yes}"
-fi
-[[ "$ROLE" == server ]] && OPT_MSTY=no
-# Games are for workstations; the family worlds are hosted where the household's
-# content lives, unless asked for elsewhere. Never on a server that faces the internet.
-if [[ "$ROLE" == server ]]; then
+  OPT_MSTY=no
+  OPT_JDOWNLOADER=no
   : "${OPT_GAMES:=no}"
-  [[ "$EXPOSE" == lan ]] && : "${OPT_HOST_GAMES:=yes}"
 fi
-: "${OPT_GAMES:=yes}" "${OPT_HOST_GAMES:=no}"
+# The family worlds are hosted where the household's content lives, unless asked
+# for elsewhere. Never on a server that faces the internet.
+if [[ "$ROLE" == server && "$EXPOSE" == lan ]]; then
+  : "${OPT_HOST_GAMES:=yes}"
+fi
+: "${OPT_HOST_GAMES:=no}"
 if [[ "$EXPOSE" == internet && ( "$OPT_HOST_GAMES" == yes || "$OPT_HOTSPOT" == yes ) ]]; then
   die "A server exposed to the internet hosts no games and no hotspot. Leave out --host-games and --hotspot."
 fi
@@ -915,11 +987,14 @@ if [[ "$PACKAGES" == yes ]]; then
     step "Install the hotspot tools (NetworkManager, iw)" apt_install network-manager iw
   fi
   step "Install map and container tools (git, Podman)" apt_install git podman netavark aardvark-dns crun uidmap pipx
-  if [[ "$ROLE" == server ]]; then
-    skip "Desktop applications (a server has no desktop)"
+  step "Install the children's guard (nftables)" apt_install nftables
+  if [[ "$DESKTOP" != yes ]]; then
+    skip "Desktop applications (this server has no desktop)"
   else
     step "Install desktop applications (VLC, Kiwix)" apt_install vlc kiwix
     step "Install the desktop alert helpers (dialogs, notifications)" install_alert_helpers
+    # GNOME's parental controls, for children's accounts. Not in every release.
+    apt-get install -y --no-install-recommends malcontent >>"$LOG_FILE" 2>&1 || true
   fi
   step "Install download helpers (yt-dlp, ffmpeg)" apt_install yt-dlp ffmpeg
   step "Install power tools (powertop, power-profiles-daemon)" apt_install powertop power-profiles-daemon
@@ -971,7 +1046,7 @@ fi
 
 section "Games"
 if [[ "$OPT_GAMES" != yes && "$OPT_HOST_GAMES" != yes ]]; then
-  skip "Games ($([[ "$ROLE" == server ]] && echo 'a server that faces the internet hosts none' || echo '--no-games'))"
+  skip "Games ($([[ "$DESKTOP" != yes ]] && echo 'no desktop to play on, and a server that faces the internet hosts none' || echo '--no-games'))"
 else
   if [[ "$OPT_GAMES" == yes && "$PACKAGES" == yes ]]; then
     step "Install the children's games (Luanti, GCompris, Tux Paint and others)" /usr/local/bin/offline games install
@@ -1018,15 +1093,15 @@ else
   [[ -n "$MODELS" ]] || MODELS="qwen2.5:0.5b"
   step "Pull Ollama models ($MODELS)" pull_models "$MODELS"
   if [[ "$OPT_MSTY" != yes ]]; then
-    skip "Msty Studio (--no-msty)"
+    skip "Msty Studio ($([[ "$DESKTOP" != yes ]] && echo 'a desktop program' || echo '--no-msty'))"
   elif [[ "$ARCH" != amd64 ]]; then
     skip "Msty Studio (published for amd64 only; this is $ARCH)"
   else
     step "Install Msty Studio" install_msty
   fi
 fi
-if [[ "$ROLE" == server ]]; then
-  skip "JDownloader (a desktop program; a server uses the download queue)"
+if [[ "$DESKTOP" != yes ]]; then
+  skip "JDownloader (a desktop program; a server without a desktop uses the download queue)"
 elif [[ "$OPT_JDOWNLOADER" != yes ]]; then
   skip "JDownloader (--no-jdownloader)"
 elif [[ "$ONLINE" != yes ]]; then
@@ -1034,8 +1109,8 @@ elif [[ "$ONLINE" != yes ]]; then
 else
   step "Install JDownloader" install_jdownloader
 fi
-if [[ "$ROLE" == server ]]; then
-  skip "Desktop shortcuts and the broadcast alert (a server has no desktop)"
+if [[ "$DESKTOP" != yes ]]; then
+  skip "Desktop shortcuts and the broadcast alert (this server has no desktop)"
 else
   step "Create desktop shortcuts and the broadcast alert" desktop_shortcuts
 fi
@@ -1130,6 +1205,7 @@ ${C_BOLD}Next${C_OFF}
   Hold packages for rebuilds  sudo offline rebuild warm        and   sudo offline rebuild image
   Find places and routes      sudo offline maps places         and   sudo offline maps routing build uk
   Be the house's Wi-Fi        sudo offline hotspot on          (needs a Wi-Fi adapter)
+  Make the first accounts     sudo offline user add NAME --adult --admin     and   sudo offline user add NAME --child
   Check health at any time    offline doctor
 
   Full log: $LOG_FILE
@@ -1148,6 +1224,7 @@ ${C_BOLD}Next${C_OFF}
   Send a family broadcast     offline broadcast "Dinner is ready"
   See the games               offline games            or   http://localhost/games.php
   Keep the family's papers    offline vault init       then   offline vault open
+  Make the family's accounts  sudo offline user add NAME --adult --admin     and   sudo offline user add NAME --child
   Check health at any time    offline doctor
 
   Log out and back in once so that $TARGET_USER can copy files into $SHARE_ROOT,

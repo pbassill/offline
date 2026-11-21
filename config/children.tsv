@@ -1,0 +1,18 @@
+# Library titles on the children's shelf.
+# Columns, separated by a single tab: the start of a ZIM file name, then a note.
+# "vikidia_en_all" covers vikidia_en_all_maxi and vikidia_en_all_nopic. A title
+# is on the shelf only if it is listed here or in /etc/offline/children.local.tsv,
+# which upgrades never overwrite; everything else is for adults who have signed in.
+#
+# These were chosen because each is made for children or for the classroom.
+# Wikipedia in simple English is not listed: it is written simply, but it covers
+# every subject the full encyclopaedia does. Add "wikipedia_en-simple_all" to the
+# local file if that suits your household.
+vikidia_en_all	Vikidia, an encyclopaedia written for readers of eight to thirteen
+phet_en_all	PhET interactive science and mathematics simulations
+phet_mul_all	PhET simulations in many languages
+prunelle_en_interactive-books	Prunelle interactive picture books
+booksdash_en_all	Book Dash picture books for young children
+ted_mul_kids	TED talks chosen for children
+ted_mul_ted-ed	TED-Ed animated lessons
+khanacademy_en_all	Khan Academy lessons and exercises
