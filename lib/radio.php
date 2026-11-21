@@ -2,7 +2,7 @@
 /**
  * Offline — radio.
  *
- * Three kinds of radio meet on these laptops: a USB software-defined receiver
+ * Three kinds of radio meet on these systems: a USB software-defined receiver
  * (SDR) for listening, Meshtastic LoRa nodes for text over the household
  * mesh, and PMR446 handsets for voice. This file reports what is plugged in,
  * drives the receiver for the common cases, wraps the Meshtastic command, and

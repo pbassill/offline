@@ -17,7 +17,7 @@ $headline = match (true) {
     $titles > 0 && $mediaFiles > 0 => "$titles library " . ($titles === 1 ? 'title' : 'titles') . " and $mediaFiles media " . ($mediaFiles === 1 ? 'file' : 'files') . ', ready with no internet.',
     $titles > 0 => "$titles library " . ($titles === 1 ? 'title' : 'titles') . ', ready with no internet.',
     $mediaFiles > 0 => "$mediaFiles media " . ($mediaFiles === 1 ? 'file' : 'files') . ', ready with no internet. The library is still empty.',
-    default => 'This laptop is set up, but nothing has been downloaded yet.',
+    default => 'This system is set up, but nothing has been downloaded yet.',
 };
 if (($power['battery'] ?? null) !== null && ($power['on_ac'] ?? true) === false) {
     $powerLine = "Running on battery at {$power['battery']} %" . (($power['seconds_left'] ?? null) !== null ? ', with about ' . human_duration((int) $power['seconds_left']) . ' left at the present draw.' : '.');
@@ -91,8 +91,8 @@ page_start('Overview', 'index');
     </section>
   </div>
 
-  <aside class="col-lg-5" aria-labelledby="h-laptop">
-    <h2 id="h-laptop">This laptop</h2>
+  <aside class="col-lg-5" aria-labelledby="h-system">
+    <h2 id="h-system">This system</h2>
 <?php
 if (($power['battery'] ?? null) !== null) {
     $battery = (int) $power['battery'];
@@ -135,19 +135,19 @@ echo meter('Storage used', $used, human_bytes((int) $storage['free']) . ' free o
       </li>
     </ul>
 
-    <h3>Other laptops</h3>
+    <h3>Other systems</h3>
 <?php
 $last = $s['sync']['last_run'] ?? null;
 $peers = $s['sync']['peers'] ?? [];
 if (!($s['sync']['enabled'] ?? true)) {
-    echo '<p>Sharing between laptops is switched off.</p>';
+    echo '<p>Sharing between systems is switched off.</p>';
 } elseif ($last === null) {
     echo '<p>No exchange has run yet. It runs every five minutes.</p>';
 } else {
     echo '<p>Last checked ' . e(utc_display($last['finished'] ?? null)) . '. ' . e(ucfirst((string) ($last['message'] ?? ''))) . '.</p>';
 }
 if ($peers !== []) {
-    echo '<p><a href="/peers.php">' . count($peers) . ' known ' . (count($peers) === 1 ? 'laptop' : 'laptops') . '</a></p>';
+    echo '<p><a href="/peers.php">' . count($peers) . ' known ' . (count($peers) === 1 ? 'system' : 'systems') . '</a></p>';
 }
 $models = $s['ai']['models'] ?? [];
 if ($models !== []) {

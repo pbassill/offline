@@ -1,5 +1,5 @@
 [Unit]
-Description=Offline: look for other laptops every five minutes
+Description=Offline: look for servers and other systems every five minutes
 
 [Timer]
 OnBootSec=1min

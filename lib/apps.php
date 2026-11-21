@@ -288,7 +288,7 @@ function app_add(array $app, bool $start): bool
     if ($code !== 0) {
         out('  fetching its image (verified against the pinned digest) ...');
         if (run_live(['podman', 'pull', '--quiet', $image]) !== 0) {
-            warn("The image for {$app['title']} could not be fetched. Is this laptop online?");
+            warn("The image for {$app['title']} could not be fetched. Is this system online?");
             return false;
         }
     }
@@ -314,7 +314,7 @@ function app_add(array $app, bool $start): bool
                 sys(['systemctl', 'reload-or-restart', 'apache2.service']);
             } else {
                 sys(['a2dissite', '-q', "offline-app-$id"]);
-                warn("Apache rejected the proxy for {$app['title']}; it is installed but reachable from this laptop only.");
+                warn("Apache rejected the proxy for {$app['title']}; it is installed but reachable from this system only.");
             }
             app_firewall($app, true);
         }
@@ -359,7 +359,7 @@ function command_apps(array $args): int
         $rows = [];
         foreach (app_states() as $id => $state) {
             $status = !$state['installed'] ? '-' : ($state['state'] === 'active' ? 'running' : 'stopped') . ($state['boot'] ? ', at boot' : ', on request');
-            $rows[] = [$id, $apps[$id]['title'], $apps[$id]['category'], $state['port'] !== null ? "{$state['scheme']}://localhost:{$state['port']}/" : 'this laptop only', $status];
+            $rows[] = [$id, $apps[$id]['title'], $apps[$id]['category'], $state['port'] !== null ? "{$state['scheme']}://localhost:{$state['port']}/" : 'this system only', $status];
         }
         table(['App', 'Name', 'Kind', 'Address', 'This machine'], $rows);
         out();
@@ -438,7 +438,7 @@ function command_apps(array $args): int
             case 'info':
                 $port = $app['proxies'][0]['lan'] ?? null;
                 out(paint($app['title'], 'bold') . '  ' . $app['description']);
-                out('  Address   ' . ($port !== null ? "{$app['scheme']}://localhost:$port/" . ($app['scheme'] === 'https' ? '   (self-signed certificate: accept the warning once)' : '') : 'this laptop only'));
+                out('  Address   ' . ($port !== null ? "{$app['scheme']}://localhost:$port/" . ($app['scheme'] === 'https' ? '   (self-signed certificate: accept the warning once)' : '') : 'this system only'));
                 out('  Sign-in   ' . $app['login']);
                 $login = prefix() . APPS_ETC . "/$id.login";
                 if (is_readable($login)) {

@@ -1,0 +1,11 @@
+[Unit]
+Description=Offline: work through the download queue every ten minutes
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=10min
+RandomizedDelaySec=30s
+Unit=offline-queue.service
+
+[Install]
+WantedBy=timers.target

@@ -11,6 +11,17 @@
 # tier. As in NOMAD, a standard pack assumes its essential pack and a comprehensive
 # pack assumes its standard pack: "sudo offline get medicine-standard" fetches both.
 # Put your own additions in /etc/offline/catalogue.local.tsv using the same layout.
+# The household pack is the core reference shelf in full: all of Wikipedia with its
+# images, the medical encyclopaedias, and Wikivoyage. Allow about 130 GiB.
+household	wikipedia_en_all_maxi	Wikipedia: Complete Wikipedia (Full)	Every English article with all images and media.	123980
+household	wikipedia_en_medicine_maxi	WikiMed Medical Encyclopedia	The medical articles of Wikipedia with images, maintained by WikiProject Medicine.	1778
+household	mdwiki_en_all_maxi	MDWiki	Clinically reviewed medical encyclopaedia from WikiProject Medicine.	2150
+household	wikivoyage_en_all_maxi	Wikivoyage	Travel guide to places worldwide, with maps and pictures.	1100
+household	nhs.uk_en_medicines	NHS Medicines A to Z	How medicines work, dosages, side effects, and interactions	16
+# United Kingdom material that Kiwix publishes ready-made. More UK sources (NHS Health
+# A to Z, GOV.UK emergency guidance, the Highway Code) are archived from their own
+# sites by a server: see "offline queue sites".
+uk	nhs.uk_en_medicines	NHS Medicines A to Z	How medicines work, dosages, side effects, and interactions	16
 wikipedia-top-mini	wikipedia_en_top_mini	Wikipedia: Quick Reference	Top 100,000 articles with minimal images. Great for quick lookups.	331
 wikipedia-top-nopic	wikipedia_en_top_nopic	Wikipedia: Popular Articles	Top articles without images. Good balance of content and size.	2239
 wikipedia-all-mini	wikipedia_en_all_mini	Wikipedia: Complete Wikipedia (Compact)	All 6+ million articles in condensed format.	12531

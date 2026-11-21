@@ -1,0 +1,33 @@
+#!/bin/bash
+#
+# Offline: write a family broadcast from the desktop.
+# Asks for the message, then hands it to "offline broadcast".
+
+set -u
+PATH=/usr/local/bin:/usr/bin:/bin
+
+if ! command -v zenity >/dev/null 2>&1; then
+  echo 'zenity is not installed. Use: offline broadcast "your message"' >&2
+  exit 1
+fi
+
+answer="$(zenity --forms --title='Family broadcast' --width=520 \
+  --text='Shown on every screen in the house and sent to the mesh radios.' \
+  --add-entry='Message' --add-combo='Priority' --combo-values='Normal|Urgent' \
+  --separator=$'\x1f' --ok-label='Send to everyone' 2>/dev/null)" || exit 0
+
+message="${answer%%$'\x1f'*}"
+priority="${answer##*$'\x1f'}"
+if [[ -z "${message// /}" ]]; then
+  zenity --error --no-markup --title='Family broadcast' --text='Nothing was sent: the message was empty.' 2>/dev/null
+  exit 1
+fi
+
+arguments=()
+[[ "$priority" == "Urgent" ]] && arguments+=(--urgent)
+if result="$(offline broadcast "${arguments[@]}" -- "$message" 2>&1)"; then
+  zenity --info --no-markup --title='Family broadcast' --width=420 --text="$result" 2>/dev/null
+else
+  zenity --error --no-markup --title='Family broadcast' --width=420 --text="$result" 2>/dev/null
+  exit 1
+fi

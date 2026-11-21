@@ -62,7 +62,7 @@ foreach ($crumbs as $i => $crumb) {
 </section>
 
 <?php if ($folders === [] && $files === []) : ?>
-<p class="empty">This folder is empty. Copy films, music or books into <code>/srv/offline/media/<?= e($prefix) ?></code> and they appear here, and on the other laptops within a few minutes.</p>
+<p class="empty">This folder is empty. Copy films, music or books into <code>/srv/offline/media/<?= e($prefix) ?></code> and they appear here, and on the other systems within a few minutes.</p>
 <?php endif; ?>
 
 <?php if ($folders !== []) : ?>

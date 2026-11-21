@@ -1,7 +1,7 @@
 [Unit]
-Description=Offline: fetch new content from other laptops on the local network
+Description=Offline: fetch new content from central servers and other systems
 Documentation=https://github.com/pbassill/offline
-After=network.target offline-rsync.service avahi-daemon.service
+After=network.target offline-tls.service avahi-daemon.service
 
 [Service]
 Type=oneshot
@@ -35,6 +35,8 @@ SystemCallArchitectures=native
 SystemCallFilter=@system-service
 SystemCallErrorNumber=EPERM
 UMask=0002
-# This job can reach private networks only. It cannot talk to the internet.
+# Private networks only. Naming a central server on the internet adds a drop-in
+# that widens this (sudo offline server add HOST); the keyed TLS handshake then
+# decides who is spoken to.
 IPAddressDeny=any
 IPAddressAllow=localhost 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 169.254.0.0/16

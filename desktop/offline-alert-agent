@@ -1,0 +1,35 @@
+#!/bin/bash
+#
+# Offline: show family broadcasts on this desktop.
+#
+# Started at login from /etc/xdg/autostart. It waits for the broadcast service
+# to rewrite /run/offline/broadcasts.json and then asks "offline broadcast alert"
+# to show whatever this person has not yet seen. It holds no privileges and
+# reads nothing but that file.
+
+set -u
+PATH=/usr/local/bin:/usr/bin:/bin
+readonly WATCHED=/run/offline
+readonly FILE=broadcasts.json
+
+# One agent per session.
+exec 9>"${XDG_RUNTIME_DIR:-/tmp}/offline-alert-agent.lock" || exit 0
+flock -n 9 || exit 0
+
+show() { offline broadcast alert >/dev/null 2>&1 || true; }
+
+# Anything sent while this machine was off or nobody was logged in.
+show
+
+while true; do
+  if command -v inotifywait >/dev/null 2>&1 && [[ -d "$WATCHED" ]]; then
+    # The file is always replaced by a rename, so one event means one complete file.
+    while IFS= read -r name; do
+      [[ "$name" == "$FILE" ]] && show
+    done < <(inotifywait --quiet --monitor --event moved_to --event close_write --format '%f' "$WATCHED" 2>/dev/null)
+    sleep 5
+  else
+    sleep 15
+    show
+  fi
+done

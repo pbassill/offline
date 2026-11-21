@@ -1,0 +1,13 @@
+# Websites worth keeping a copy of, archived as library titles by a server.
+# Columns, separated by single tabs: id, group, address, ZIM name, title (30 characters
+# at most), page limit, note. The crawl stays beneath the address given.
+#   sudo offline queue site uk          every site in the uk group
+#   sudo offline queue site nhs-conditions
+# Each is published under the Open Government Licence v3.0, which permits copying
+# with acknowledgement of the source. The NHS asks that syndicated copies be kept
+# current, so archive it again every few months. The archiver fetches two pages at a
+# time and identifies itself, to avoid burdening the sites.
+# Put your own sites in /etc/offline/sites.local.tsv using the same layout.
+be-ready	uk	https://beready.campaign.gov.uk/	beready.campaign.gov.uk_en_all	UK Government: Be Ready	400	Emergency preparedness advice for households. Contains public sector information licensed under the Open Government Licence v3.0.
+nhs-conditions	uk	https://www.nhs.uk/conditions/	nhs.uk_en_conditions	NHS Health A to Z	6000	Conditions, symptoms and treatments. Contains public sector information licensed under the Open Government Licence v3.0. Source: NHS website, nhs.uk.
+highway-code	uk	https://www.gov.uk/guidance/the-highway-code	gov.uk_en_highway-code	The Highway Code	300	Rules for all road users in Great Britain. Contains public sector information licensed under the Open Government Licence v3.0.

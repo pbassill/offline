@@ -11,8 +11,11 @@ declare(strict_types=1);
 
 namespace Offline;
 
-const VERSION = '2.1.0';
+const VERSION = '2.2.0';
+/** The sharing daemon itself, on 127.0.0.1 only. */
 const SYNC_PORT = 47001;
+/** What other systems connect to: the same daemon behind TLS keyed from the house key. */
+const TLS_PORT = 47002;
 const READER_PORT = 8080;
 const SERVICE_USER = 'offline';
 const MDNS_TYPE = '_offline-sync._tcp';
@@ -36,7 +39,13 @@ const PLAYABLE_VIDEO = ['mp4', 'm4v', 'webm'];
 const PLAYABLE_AUDIO = ['mp3', 'flac', 'ogg', 'oga', 'opus', 'm4a', 'wav', 'aac'];
 
 const DEFAULTS = [
+    'ROLE' => 'workstation',
     'PORTAL_SCOPE' => 'lan',
+    'SERVERS' => '',
+    'SYNC_EXPOSE' => 'lan',
+    'STAGING_AUTOPUBLISH' => 'no',
+    'MESH_GATEWAY' => 'yes',
+    'BROADCAST_HOURS' => '12',
     'SYNC_ENABLED' => 'yes',
     'SYNC_MODULES' => 'knowledge media maps',
     'SYNC_MIN_FREE_GB' => '10',
@@ -64,6 +73,7 @@ function path(string $key): string
     static $map = [
         'conf' => '/etc/offline/offline.conf',
         'key' => '/etc/offline/house.key',
+        'psk' => '/etc/offline/sync.psk',
         'secrets' => '/etc/offline/rsyncd.secrets',
         'catalogue' => '/usr/local/lib/offline/catalogue.tsv',
         'catalogue_local' => '/etc/offline/catalogue.local.tsv',
@@ -81,6 +91,12 @@ function path(string $key): string
         'apps_catalogue' => '/usr/local/lib/offline/apps',
         'data' => '/usr/local/lib/offline/data',
         'state' => '/var/lib/offline',
+        'broadcasts' => '/var/lib/offline/broadcasts',
+        'inbox' => '/var/lib/offline/inbox',
+        'outbox' => '/var/lib/offline/outbox',
+        'queue' => '/var/lib/offline/queue.json',
+        'staging' => '/srv/offline/staging',
+        'alerts' => '/run/offline/broadcasts.json',
         'library' => '/var/lib/offline/library.xml',
         'peers' => '/var/lib/offline/peers.json',
         'cache' => '/var/lib/offline/catalogue-cache.json',
@@ -114,6 +130,31 @@ function config(?string $key = null): mixed
         }
     }
     return $key === null ? $cfg : ($cfg[$key] ?? null);
+}
+
+/**
+ * The central servers this system pulls from, in order of preference:
+ * [['host' => 'server.example.org', 'port' => 47002], ...]. Entries that are
+ * not a plain host name or IPv4 address are ignored.
+ */
+function servers(): array
+{
+    $servers = [];
+    foreach (preg_split('/[\s,]+/', (string) config('SERVERS'), -1, PREG_SPLIT_NO_EMPTY) ?: [] as $entry) {
+        if (preg_match('/^([A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?)(?::(\d{2,5}))?$/', $entry, $m) !== 1) {
+            continue;
+        }
+        $port = isset($m[3]) ? (int) $m[3] : TLS_PORT;
+        if ($port >= 1 && $port <= 65535) {
+            $servers[strtolower($m[1])] = ['host' => strtolower($m[1]), 'port' => $port];
+        }
+    }
+    return array_values($servers);
+}
+
+function is_server(): bool
+{
+    return config('ROLE') === 'server';
 }
 
 function config_bool(string $key): bool
@@ -195,7 +236,8 @@ function read_json(string $file): array
  */
 function parse_zim_name(string $file): ?array
 {
-    if (preg_match('/^([A-Za-z0-9][A-Za-z0-9._+-]{0,180})_(\d{4}-\d{2})\.zim$/', $file, $m) !== 1) {
+    // Kiwix sometimes reissues a month's edition with a letter: 2026-09, then 2026-09b.
+    if (preg_match('/^([A-Za-z0-9][A-Za-z0-9._+-]{0,180})_(\d{4}-\d{2}[a-z]?)\.zim$/', $file, $m) !== 1) {
         return null;
     }
     return ['base' => $m[1], 'date' => $m[2]];

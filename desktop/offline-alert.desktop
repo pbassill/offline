@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Offline family broadcasts
+Comment=Shows family broadcasts on this screen
+Exec=/usr/local/lib/offline/desktop/offline-alert-agent
+Icon=dialog-information
+Terminal=false
+NoDisplay=true
+X-GNOME-Autostart-enabled=true
+X-GNOME-Autostart-Delay=5

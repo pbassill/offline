@@ -16,6 +16,8 @@ require_once __DIR__ . '/core.php';
 require_once __DIR__ . '/maps.php';
 require_once __DIR__ . '/apps.php';
 require_once __DIR__ . '/radio.php';
+require_once __DIR__ . '/server.php';
+require_once __DIR__ . '/broadcast.php';
 
 // ---------------------------------------------------------------------------
 // Output
@@ -138,6 +140,10 @@ function child_env(): array
 
 function have(string $binary): bool
 {
+    // An absolute path names one program; anything else is looked for on the fixed PATH.
+    if ($binary !== '' && $binary[0] === '/') {
+        return is_executable($binary);
+    }
     foreach (explode(':', child_env()['PATH']) as $dir) {
         if (is_executable("$dir/$binary")) {
             return true;
@@ -150,13 +156,13 @@ function have(string $binary): bool
  * Run a program and capture its output. Returns [exit code, stdout, stderr].
  * A timeout of zero means wait for as long as it takes.
  */
-function run(array $command, int $timeout = 60): array
+function run(array $command, int $timeout = 60, array $env = []): array
 {
     if (!have($command[0])) {
         return [127, '', $command[0] . ' is not installed'];
     }
     $spec = [0 => ['file', '/dev/null', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
-    $proc = @proc_open($command, $spec, $pipes, null, child_env());
+    $proc = @proc_open($command, $spec, $pipes, null, $env + child_env());
     if (!is_resource($proc)) {
         return [126, '', 'could not start ' . $command[0]];
     }
@@ -199,14 +205,14 @@ function run(array $command, int $timeout = 60): array
 }
 
 /** Run a program attached to the terminal (or the journal) so progress is visible. */
-function run_live(array $command): int
+function run_live(array $command, array $env = []): int
 {
     if (!have($command[0])) {
         warn($command[0] . ' is not installed');
         return 127;
     }
     $spec = [0 => ['file', '/dev/null', 'r'], 1 => STDOUT, 2 => STDERR];
-    $proc = @proc_open($command, $spec, $pipes, null, child_env());
+    $proc = @proc_open($command, $spec, $pipes, null, $env + child_env());
     return is_resource($proc) ? proc_close($proc) : 126;
 }
 
@@ -384,9 +390,12 @@ function power_state(): array
 function service_states(): array
 {
     $units = [
-        'share' => ['offline-rsync.service', 'Content sharing', SYNC_PORT],
+        'share' => ['offline-tls.service', 'Sharing (encrypted)', TLS_PORT],
+        'daemon' => ['offline-rsync.service', 'Sharing daemon', SYNC_PORT],
         'reader' => ['offline-reader.service', 'Library reader', READER_PORT],
-        'sync' => ['offline-peer-sync.timer', 'Peer sync timer', null],
+        'sync' => ['offline-peer-sync.timer', 'Sync timer', null],
+        'broadcast' => ['offline-broadcast.path', 'Family broadcast', null],
+    ] + (is_server() ? ['queue' => ['offline-queue.timer', 'Download queue', null]] : []) + [
         'portal' => ['apache2.service', 'Web portal', 80],
         'discovery' => ['avahi-daemon.service', 'Peer discovery', null],
         'firewall' => ['ufw.service', 'Firewall', null],
@@ -494,6 +503,10 @@ function collect_status(): array
         'apps' => array_values(app_states()),
         'radio' => radio_status(),
         'house_key' => is_file(path('key')) && (int) @filesize(path('key')) > 0,
+        'role' => is_server() ? 'server' : 'workstation',
+        'servers' => array_map(static fn (array $s): string => peer_key($s['host'], $s['port']), servers()),
+        'queue' => queue_summary(),
+        'broadcast' => ['hours' => config_int('BROADCAST_HOURS', 1, 24), 'mesh_gateway' => config_bool('MESH_GATEWAY')],
         'sync' => [
             'enabled' => config_bool('SYNC_ENABLED'),
             'last_run' => $peers['last_run'] ?? null,
@@ -529,7 +542,7 @@ function command_status(array $args): int
     }
 
     $host = $status['host'];
-    out(paint('OFFLINE ' . VERSION, 'bold') . '  ' . printable($host['name']) . '  ' . paint(utc_display($status['generated']), 'dim'));
+    out(paint('OFFLINE ' . VERSION, 'bold') . '  ' . printable($host['name']) . " ({$status['role']})  " . paint(utc_display($status['generated']), 'dim'));
 
     heading('System');
     out('  ' . printable($host['os']) . ', kernel ' . printable($host['kernel']) . ', up ' . human_duration($host['uptime']) . ', load ' . number_format($host['load'], 2));
@@ -554,9 +567,9 @@ function command_status(array $args): int
         if ($service['port'] !== null && $service['listening'] !== null) {
             $detail .= $service['listening'] ? ", listening on port {$service['port']}" : ", nothing listening on port {$service['port']}";
         }
-        out('  ' . state_mark($service['state'], $service['listening']) . ' ' . str_pad($service['label'], 18) . $detail);
+        out('  ' . state_mark($service['state'], $service['listening']) . ' ' . str_pad($service['label'], 21) . ' ' . $detail);
     }
-    out('  ' . state_mark($status['house_key'] ? 'ok' : 'fail') . ' ' . str_pad('House key', 18) . ($status['house_key'] ? 'set' : 'not set; run: sudo offline key new'));
+    out('  ' . state_mark($status['house_key'] ? 'ok' : 'fail') . ' ' . str_pad('House key', 21) . ' ' . ($status['house_key'] ? 'set' : 'not set; run: sudo offline key new'));
 
     heading('Knowledge');
     $knowledge = $status['knowledge'];
@@ -592,7 +605,7 @@ function command_status(array $args): int
         out('  None installed. See: offline apps');
     } else {
         table(['App', 'Address', 'State'], array_map(static fn (array $a): array => [
-            $a['title'], $a['port'] !== null ? "{$a['scheme']}://localhost:{$a['port']}/" : 'this laptop only',
+            $a['title'], $a['port'] !== null ? "{$a['scheme']}://localhost:{$a['port']}/" : 'this system only',
             ($a['state'] === 'active' ? 'running' : 'stopped') . ($a['boot'] ? ', at boot' : ', on request'),
         ], $installedApps));
     }
@@ -601,7 +614,18 @@ function command_status(array $args): int
     $models = $status['ai']['models'];
     out('  ' . ($models === [] ? 'No Ollama models reported.' : implode(', ', array_map(static fn (array $m): string => printable($m['name']) . ' (' . human_bytes($m['size']) . ')', $models))));
 
-    heading('Peers');
+    $queue = $status['queue'];
+    if ($status['role'] === 'server' || $queue['total'] > 0) {
+        heading('Download queue and staging');
+        out('  ' . ($queue['total'] === 0 ? 'The queue is empty.' : implode(', ', array_map(static fn (string $state, int $count): string => "$count $state", array_keys($queue['states']), $queue['states'])))
+            . '  Staging holds ' . human_bytes($queue['staging_bytes']) . '.');
+        if (($queue['states']['staged'] ?? 0) > 0) {
+            out('  Release what is staged with: sudo offline stage publish all');
+        }
+    }
+
+    heading('Servers and peers');
+    out('  Central servers: ' . ($status['servers'] === [] ? 'none configured' : printable(implode(', ', $status['servers']), 200)));
     $last = $status['sync']['last_run'];
     if (!$status['sync']['enabled']) {
         out('  Peer sync is switched off in /etc/offline/offline.conf.');
@@ -642,6 +666,15 @@ function command_doctor(array $args): int
         $add('House key', 'fail', 'readable by every local account', 'sudo chmod 0640 ' . $keyFile);
     } else {
         $add('House key', 'ok', 'set and not world-readable');
+        // The transport key is derived from the house key; the two must agree or no connection opens.
+        $psk = @file_get_contents(path('psk'));
+        if (!is_file(path('psk'))) {
+            $add('Transport key', 'fail', 'missing, so the encrypted channel cannot open', 'sudo offline key refresh');
+        } elseif ($psk !== false && trim($psk) !== SERVICE_USER . ':' . derived_key('offline-sync-v1')) {
+            $add('Transport key', 'fail', 'does not match the house key', 'sudo offline key refresh');
+        } else {
+            $add('Transport key', 'ok', 'present; connections between systems are encrypted');
+        }
     }
 
     foreach (['zim' => 'Knowledge folder', 'media' => 'Media folder', 'state' => 'State folder'] as $key => $label) {
@@ -683,11 +716,24 @@ function command_doctor(array $args): int
     $seen = array_filter($status['sync']['peers'], static fn (array $p): bool => ($p['auth'] ?? '') === 'ok');
     $rejected = array_filter($status['sync']['peers'], static fn (array $p): bool => ($p['auth'] ?? '') === 'rejected');
     if ($rejected !== []) {
-        $add('Peers', 'warn', plural(count($rejected), 'laptop') . ' refused this laptop\'s house key', 'Give every laptop the same key: sudo offline key set KEY');
+        $add('Peers', 'warn', plural(count($rejected), 'system') . ' refused this system\'s house key', 'Give every system the same key: sudo offline key set KEY');
     } elseif ($seen === []) {
-        $add('Peers', 'warn', 'no trusted laptop has been reached yet', 'sudo offline sync');
+        $add('Peers', 'warn', 'no trusted system has been reached yet', 'sudo offline sync');
     } else {
-        $add('Peers', 'ok', plural(count($seen), 'trusted laptop') . ' known');
+        $add('Peers', 'ok', plural(count($seen), 'trusted system') . ' known');
+    }
+    $known = array_column($status['sync']['peers'], null, 'address');
+    foreach ($status['servers'] as $server) {
+        $auth = $known[$server]['auth'] ?? 'unknown';
+        $add("Server $server", $auth === 'ok' ? 'ok' : 'warn', match ($auth) {
+            'ok' => 'reached at ' . utc_display($known[$server]['last_sync'] ?? null),
+            'rejected' => 'holds a different house key',
+            'unknown' => 'not yet contacted',
+            default => 'not reached at the last sync (expected when it is out of range)',
+        }, 'sudo offline server test');
+    }
+    if ($status['role'] === 'server' && ($status['queue']['states']['failed'] ?? 0) > 0) {
+        $add('Download queue', 'warn', plural($status['queue']['states']['failed'], 'download') . ' failed', 'offline queue   then   sudo offline queue retry ID');
     }
 
     if (in_array('--online', $args, true)) {
@@ -700,7 +746,7 @@ function command_doctor(array $args): int
     out();
     foreach ($checks as $check) {
         $worst = max($worst, ['ok' => 0, 'warn' => 1, 'fail' => 2][$check['state']]);
-        out('  ' . state_mark($check['state']) . ' ' . str_pad($check['name'], 18) . printable($check['detail'], 160));
+        out('  ' . state_mark($check['state']) . ' ' . str_pad(printable($check['name'], 40), 21) . ' ' . printable($check['detail'], 160));
         if ($check['state'] !== 'ok' && $check['fix'] !== '') {
             out('      ' . paint('fix: ' . $check['fix'], 'dim'));
         }
@@ -911,7 +957,7 @@ function download_zim(array $target): bool
     // then verifies the finished file against that checksum.
     $meta = https_get($target['url'] . '.meta4', 60);
     if ($meta === null) {
-        warn("Could not fetch the download description for {$target['file']}. Is this laptop online?");
+        warn("Could not fetch the download description for {$target['file']}. Is this system online?");
         return false;
     }
     if (preg_match('/<hash\s+type="sha-256">\s*[0-9a-f]{64}\s*<\/hash>/i', $meta) !== 1) {
@@ -1269,18 +1315,35 @@ function scan_hosts(array $ips, int $port, float $timeout = 0.5, int $batch = 12
 }
 
 /** Find other Offline machines on the local network: address => details. */
+function peer_key(string $address, int $port): string
+{
+    return $port === TLS_PORT ? $address : "$address:$port";
+}
+
+/**
+ * The systems to pull from: the configured central servers first, then other
+ * machines found on the local network. Keyed by address.
+ */
 function discover_peers(bool $verbose): array
 {
+    $peers = [];
+    foreach (servers() as $server) {
+        $peers[peer_key($server['host'], $server['port'])] = ['address' => $server['host'], 'port' => $server['port'], 'name' => $server['host'], 'method' => 'server'];
+    }
     if (prefix() !== '') {
-        $peers = [];
         foreach (array_filter(explode(',', (string) getenv('OFFLINE_TEST_PEERS'))) as $spec) {
-            [$ip, $port] = explode(':', $spec) + [1 => (string) SYNC_PORT];
-            $peers[$ip] = ['address' => $ip, 'port' => (int) $port, 'name' => 'test-peer', 'method' => 'test'];
+            [$ip, $port] = explode(':', $spec) + [1 => (string) TLS_PORT];
+            $peers[peer_key($ip, (int) $port)] = ['address' => $ip, 'port' => (int) $port, 'name' => 'test-peer', 'method' => 'test'];
         }
         return $peers;
     }
+    // A server on the internet speaks only to the servers it has been given;
+    // it does not go looking through a datacentre's network.
+    if ((string) config('SYNC_EXPOSE') === 'internet') {
+        return $peers;
+    }
     $own = array_column(own_addresses(), 'ip');
-    $peers = [];
+    $local = [];
     if (have('avahi-browse')) {
         [, $output] = run(['avahi-browse', '--resolve', '--parsable', '--terminate', '--no-db-lookup', MDNS_TYPE], 15);
         foreach (preg_split('/\R/', $output) ?: [] as $line) {
@@ -1289,14 +1352,14 @@ function discover_peers(bool $verbose): array
                 continue;
             }
             [$ip, $port] = [$fields[7], (int) $fields[8]];
-            if ($port !== SYNC_PORT || !is_private_ipv4($ip) || in_array($ip, $own, true)) {
+            if ($port !== TLS_PORT || !is_private_ipv4($ip) || in_array($ip, $own, true)) {
                 continue;
             }
             $name = preg_replace_callback('/\\\\(\d{3})/', static fn (array $m): string => chr((int) $m[1] & 0xff), $fields[3]) ?? '';
-            $peers[$ip] = ['address' => $ip, 'port' => $port, 'name' => printable($name, 60), 'method' => 'mdns'];
+            $local[$ip] = ['address' => $ip, 'port' => $port, 'name' => printable($name, 60), 'method' => 'mdns'];
         }
     }
-    if ($peers === [] && config_bool('SYNC_SCAN_FALLBACK')) {
+    if ($local === [] && config_bool('SYNC_SCAN_FALLBACK')) {
         $candidates = [];
         foreach (own_addresses() as $address) {
             if ($address['prefix'] < 22 || $address['prefix'] > 30 || !is_private_ipv4($address['ip'])) {
@@ -1313,10 +1376,22 @@ function discover_peers(bool $verbose): array
             }
         }
         if ($verbose && $candidates !== []) {
-            out('No peer announced itself; checking ' . count($candidates) . ' local addresses directly ...');
+            out('No machine announced itself; checking ' . count($candidates) . ' local addresses directly ...');
         }
-        foreach (scan_hosts(array_keys($candidates), SYNC_PORT) as $ip) {
-            $peers[$ip] = ['address' => $ip, 'port' => SYNC_PORT, 'name' => '', 'method' => 'scan'];
+        foreach (scan_hosts(array_keys($candidates), TLS_PORT) as $ip) {
+            $local[$ip] = ['address' => $ip, 'port' => TLS_PORT, 'name' => '', 'method' => 'scan'];
+        }
+    }
+    // A server that is also on the local network is listed once, as the server.
+    $serverAddresses = [];
+    foreach (servers() as $server) {
+        foreach (@gethostbynamel($server['host']) ?: [] as $resolved) {
+            $serverAddresses[$resolved] = true;
+        }
+    }
+    foreach ($local as $ip => $peer) {
+        if (!isset($serverAddresses[$ip])) {
+            $peers[$ip] = $peer;
         }
     }
     return $peers;
@@ -1324,7 +1399,62 @@ function discover_peers(bool $verbose): array
 
 function rsync_url(array $peer, string $module): string
 {
-    return 'rsync://' . SERVICE_USER . '@' . $peer['address'] . ':' . $peer['port'] . '/' . $module . '/';
+    // The address is only a label here: the connection itself is made by the TLS helper below.
+    return 'rsync://' . SERVICE_USER . '@' . $peer['address'] . '/' . $module . '/';
+}
+
+/**
+ * Keys derived from the house key, one per purpose, so that no two uses
+ * share key material. Returns 64 hexadecimal characters, or null with no key.
+ */
+function derived_key(string $purpose): ?string
+{
+    $key = trim((string) @file_get_contents(path('key')));
+    return $key === '' ? null : hash_hmac('sha256', $purpose, $key);
+}
+
+/**
+ * Every connection to another system is TLS 1.3 with a pre-shared key derived
+ * from the house key: both ends prove they hold it, a fresh X25519 exchange
+ * gives each connection its own keys, and everything that follows is encrypted. rsync is told to reach the far daemon through
+ * stunnel, which reads the key from a file so it never appears in a process
+ * list. Returns the environment for run() and the config file to remove.
+ */
+function tls_transport(array $peer, int $connectTimeout = 8): array
+{
+    static $counter = 0;
+    $conf = path('state') . '/tls-' . getmypid() . '-' . (++$counter) . '.conf';
+    $previous = umask(0077);
+    file_put_contents($conf, implode("\n", [
+        '; Written by "offline" for one connection; removed afterwards.',
+        'foreground = yes',
+        'pid =',
+        'debug = 3',
+        'client = yes',
+        'connect = ' . $peer['address'] . ':' . $peer['port'],
+        'ciphers = PSK',
+        'ciphersuites = TLS_CHACHA20_POLY1305_SHA256:TLS_AES_128_GCM_SHA256',
+        'sslVersionMin = TLSv1.3',
+        'PSKsecrets = ' . path('psk'),
+        'TIMEOUTconnect = ' . max(1, min(60, $connectTimeout)),
+        'TIMEOUTbusy = 60',
+        'TIMEOUTidle = 600',
+        '',
+    ]));
+    umask($previous);
+    return [['RSYNC_CONNECT_PROG' => 'stunnel ' . $conf], $conf];
+}
+
+/** Turn a failed connection's error text into a state and a sentence. */
+function classify_transport_error(string $error): array
+{
+    if (preg_match('/auth failed|SSL_connect|SSL_accept|alert|binder|decrypt/i', $error) === 1) {
+        return ['rejected', 'it holds a different house key'];
+    }
+    if (preg_match('/refused|timed out|No more addresses|unreachable|resolve|did not see server greeting/i', $error) === 1) {
+        return ['error', 'it could not be reached'];
+    }
+    return ['error', printable(trim($error), 160)];
 }
 
 /**
@@ -1333,13 +1463,19 @@ function rsync_url(array $peer, string $module): string
  */
 function remote_listing(array $peer, string $module): array
 {
+    [$env, $conf] = tls_transport($peer);
     [$code, $output, $error] = run([
         'rsync', '--list-only', '--recursive', '--no-motd', '--no-human-readable', '--8-bit-output',
-        '--contimeout=6', '--timeout=60', '--password-file=' . path('key'), rsync_url($peer, $module),
-    ], 180);
+        '--timeout=60', '--password-file=' . path('key'), rsync_url($peer, $module),
+    ], 180, $env);
+    @unlink($conf);
     if ($code !== 0) {
-        $rejected = stripos($error, 'auth failed') !== false;
-        return ['ok' => false, 'auth' => $rejected ? 'rejected' : 'error', 'error' => $rejected ? 'it refused this laptop\'s house key' : printable(trim($error), 160), 'files' => []];
+        [$state, $sentence] = classify_transport_error($error);
+        // A module the far side does not offer is not a failure of the link.
+        if (stripos($error, 'Unknown module') !== false) {
+            [$state, $sentence] = ['error', "it does not offer \"$module\""];
+        }
+        return ['ok' => false, 'auth' => $state, 'error' => $sentence, 'files' => []];
     }
     $files = [];
     foreach (preg_split('/\R/', $output) ?: [] as $line) {
@@ -1413,9 +1549,10 @@ function pull_files(array $peer, string $module, array $files, bool $showProgres
     @unlink($log);
     $command = [
         'rsync', '--times', '--update', '--from0', '--files-from=' . $list, '--partial-dir=.rsync-partial',
-        '--no-motd', '--chmod=D2775,F664', '--contimeout=10', '--timeout=300',
+        '--no-motd', '--chmod=D2775,F664', '--timeout=300',
         '--password-file=' . path('key'), '--log-file=' . $log, '--log-file-format=%n|%l',
     ];
+    [$env, $conf] = tls_transport($peer);
     $limit = config_int('SYNC_BWLIMIT_KBPS');
     if ($limit > 0) {
         $command[] = '--bwlimit=' . $limit;
@@ -1426,11 +1563,12 @@ function pull_files(array $peer, string $module, array $files, bool $showProgres
     $command[] = rsync_url($peer, $module);
     $command[] = path($module) . '/';
     if ($showProgress) {
-        $code = run_live($command);
+        $code = run_live($command, $env);
         $error = '';
     } else {
-        [$code, , $error] = run($command, 0);
+        [$code, , $error] = run($command, 0, $env);
     }
+    @unlink($conf);
     $count = 0;
     $bytes = 0;
     $received = [];
@@ -1503,7 +1641,7 @@ function command_peers(array $args): int
     $state = is_writable(path('state')) ? remember_peers($found) : merge_peers(read_json(path('peers')), $found);
     if (($state['peers'] ?? []) === []) {
         out('No other Offline machine has been seen on this network.');
-        out('Each laptop must be on the same network and hold the same house key (sudo offline key show).');
+        out('Each system must be on the same network and hold the same house key (sudo offline key show).');
         return 0;
     }
     $rows = [];
@@ -1554,7 +1692,7 @@ function command_sync(array $args): int
 
     $found = discover_peers($interactive);
     if ($found === []) {
-        return $finish('ok', 'No other laptop found on the local network.');
+        return $finish('ok', 'No other system found on the local network.');
     }
     $modules = array_values(array_intersect(preg_split('/[\s,]+/', (string) config('SYNC_MODULES')) ?: [], array_keys(SYNC_EXTENSIONS)));
     $budget = max(0, free_bytes() - config_int('SYNC_MIN_FREE_GB') * 1024 ** 3);
@@ -1575,7 +1713,7 @@ function command_sync(array $args): int
                     out("  $ip: {$listing['error']}");
                     break;
                 }
-                // A laptop on an older version may not offer every module; carry on with the rest.
+                // A system on an older version may not offer every module; carry on with the rest.
                 $result['error'] = "$module: {$listing['error']}";
                 continue;
             }
@@ -1619,7 +1757,7 @@ function command_sync(array $args): int
         rebuild_library(false);
     }
     $trusted = count(array_filter($results, static fn (array $r): bool => $r['auth'] === 'ok'));
-    $message = plural(count($found), 'laptop') . ' found, ' . $trusted . ' trusted; '
+    $message = plural(count($found), 'system') . ' found, ' . $trusted . ' trusted; '
         . ($dryRun ? 'dry run, nothing fetched' : ($totalFiles === 0 ? 'nothing new to fetch' : plural($totalFiles, 'file') . ' received (' . human_bytes($totalBytes) . ')'));
     if ($counts['no_space'] > 0) {
         $message .= '; ' . plural($counts['no_space'], 'file') . ' left behind to protect free space';
@@ -1655,8 +1793,15 @@ function new_key(): string
 
 function store_key(string $key): void
 {
-    $gid = prefix() === '' ? (posix_getgrnam(SERVICE_USER)['gid'] ?? null) : null;
-    foreach ([path('key') => $key . "\n", path('secrets') => SERVICE_USER . ':' . $key . "\n"] as $file => $content) {
+    $account = prefix() === '' ? posix_getpwnam(SERVICE_USER) : false;
+    // house.key and rsyncd.secrets: root's, readable by the service group.
+    // sync.psk: the TLS key derived from the house key, for the service account alone.
+    $files = [
+        path('key') => [$key . "\n", 0640, 0],
+        path('secrets') => [SERVICE_USER . ':' . $key . "\n", 0640, 0],
+        path('psk') => [SERVICE_USER . ':' . hash_hmac('sha256', 'offline-sync-v1', $key) . "\n", 0600, $account['uid'] ?? 0],
+    ];
+    foreach ($files as $file => [$content, $mode, $owner]) {
         $tmp = $file . '.tmp.' . getmypid();
         $previous = umask(0077);
         $written = file_put_contents($tmp, $content);
@@ -1664,11 +1809,11 @@ function store_key(string $key): void
         if ($written === false) {
             fail("Could not write $file");
         }
-        if ($gid !== null) {
-            chown($tmp, 0);
-            chgrp($tmp, $gid);
+        if ($account !== false) {
+            chown($tmp, $owner);
+            chgrp($tmp, $account['gid']);
         }
-        chmod($tmp, 0640);
+        chmod($tmp, $mode);
         if (!rename($tmp, $file)) {
             fail("Could not replace $file");
         }
@@ -1689,17 +1834,17 @@ function command_key(array $args): int
             }
             out($key);
             out();
-            out('Enter the same key on every other laptop with: sudo offline key set ' . $key);
+            out('Enter the same key on every other system with: sudo offline key set ' . $key);
             return 0;
         case 'new':
             if (is_file(path('key')) && (int) filesize(path('key')) > 0 && !in_array('--force', $args, true)) {
-                fail('A house key already exists. Replacing it cuts this laptop off from the others until they are given the new key. Repeat with --force if that is intended.');
+                fail('A house key already exists. Replacing it cuts this system off from the others until they are given the new key. Repeat with --force if that is intended.');
             }
             $key = new_key();
             store_key($key);
             out($key);
             out();
-            out('Stored. Enter the same key on every other laptop with: sudo offline key set ' . $key);
+            out('Stored. Enter the same key on every other system with: sudo offline key set ' . $key);
             return 0;
         case 'set':
             $given = (string) ($args[1] ?? '');
@@ -1715,7 +1860,16 @@ function command_key(array $args): int
                 fail('That is not a valid house key. A key is 25 letters and digits, shown as five groups of five.');
             }
             store_key($key);
-            out('House key stored. This laptop will now exchange content with others holding the same key.');
+            out('House key stored. This system will now exchange content with others holding the same key.');
+            return 0;
+        case 'refresh':
+            // Rewrite the files derived from the existing key, after an upgrade.
+            $key = normalise_key(trim((string) @file_get_contents(path('key'))));
+            if ($key === null) {
+                fail('No valid house key is stored. Create one with: sudo offline key new');
+            }
+            store_key($key);
+            out('Key files refreshed.');
             return 0;
         default:
             fail('Usage: sudo offline key [show|new|set [KEY]]');
@@ -1755,12 +1909,12 @@ function command_power(array $args): int
 
 function usage(): void
 {
-    out('offline ' . VERSION . ' - manage this laptop\'s offline library');
+    out('offline ' . VERSION . ' - manage this system\'s offline library');
     out();
     out('Information');
     out('  offline status [--json]          what is installed, running and shared');
     out('  offline doctor [--online]        health checks, each with its fix');
-    out('  offline peers                    other Offline laptops on this network');
+    out('  offline peers                    other Offline systems on this network');
     out('  offline power [saver|balanced|performance]');
     out();
     out('Content (run with sudo)');
@@ -1792,9 +1946,24 @@ function usage(): void
     out('  offline radio mesh info|nodes|send TEXT|region EU_868');
     out('  sudo offline radio firmware          keep Meshtastic firmware on disc for offline flashing');
     out();
+    out('Family broadcast');
+    out('  offline broadcast "TEXT" [--urgent]  alert every screen and the Meshtastic mesh');
+    out('  offline broadcast                    recent broadcasts and how the last one was delivered');
+    out();
+    out('Central servers (run with sudo, except the lists)');
+    out('  offline server                       the servers this system pulls from');
+    out('  offline server add HOST[:PORT] | remove HOST | test');
+    out('  offline queue                        downloads waiting, running and done');
+    out('  offline queue add URL ... [--to movies|tv|music|radio|books] [--audio]');
+    out('  offline queue sites                  websites worth archiving, UK ones included');
+    out('  offline queue site NAME|GROUP        archive a website as a library title');
+    out('  offline queue run | archive | remove ID | retry ID');
+    out('  offline stage                        what has been downloaded and awaits release');
+    out('  offline stage publish ID|all [--to FOLDER] | discard ID');
+    out();
     out('Sharing (run with sudo)');
-    out('  offline sync [--dry-run] [--force]   fetch new content from peers now');
-    out('  offline key [show|new|set [KEY]]     the house key that peers must share');
+    out('  offline sync [--dry-run] [--force]   fetch new content from servers and peers now');
+    out('  offline key [show|new|set [KEY]|refresh]   the house key every system must share');
 }
 
 function main(array $argv): int
@@ -1818,6 +1987,14 @@ function main(array $argv): int
     if ($command === 'radio' && ($args[0] ?? '') !== 'firmware') {
         $keepsRoot[] = 'radio';
     }
+    // Naming a server edits the settings and the firewall of the sync job; archiving a site runs a container.
+    if (($command === 'server' && in_array($args[0] ?? '', ['add', 'remove'], true)) || ($command === 'queue' && ($args[0] ?? '') === 'archive')) {
+        $keepsRoot[] = $command;
+    }
+    // The desktop alert runs as the person logged in, and so does asking for a broadcast.
+    if ($command === 'broadcast' && ($args[0] ?? 'list') === 'alert') {
+        $keepsRoot[] = 'broadcast';
+    }
     if (prefix() === '' && is_root() && !in_array($command, $keepsRoot, true)) {
         become_service_user($command);
     }
@@ -1838,6 +2015,10 @@ function main(array $argv): int
         'maps' => command_maps($args),
         'apps' => command_apps($args),
         'radio' => command_radio($args),
+        'server', 'servers' => command_server($args),
+        'queue' => command_queue($args),
+        'stage', 'staging' => command_stage($args),
+        'broadcast' => command_broadcast($args),
         'version', '--version', '-V' => (static function (): int {
             out(VERSION);
             return 0;

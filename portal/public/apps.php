@@ -15,7 +15,7 @@ page_start('Apps', 'apps');
 ?>
 <section class="page-head">
   <h1>Apps</h1>
-  <p class="hero-sub">Tools that run on this laptop and open in a browser on any device at home. <?= $running ?> <?= $running === 1 ? 'is' : 'are' ?> running now. Each one runs in its own sealed container and is reached only through this laptop's own gateway.</p>
+  <p class="hero-sub">Tools that run on this system and open in a browser on any device at home. <?= $running ?> <?= $running === 1 ? 'is' : 'are' ?> running now. Each one runs in its own sealed container and is reached only through this system's own gateway.</p>
 </section>
 
 <?php foreach ($groups as $category => $apps) : ?>
@@ -62,9 +62,9 @@ page_start('Apps', 'apps');
 <section aria-labelledby="h-appnotes">
   <h2 id="h-appnotes">Good to know</h2>
   <ul class="plain">
-    <li>Addresses beginning <code>https://</code> use a certificate this laptop made for itself, so a browser shows a warning the first time. Accept it once per device.</li>
+    <li>Addresses beginning <code>https://</code> use a certificate this system made for itself, so a browser shows a warning the first time. Accept it once per device.</li>
     <li>Heavier apps start on request to save memory and battery. <code>sudo offline apps enable NAME</code> starts one at every boot; <code>disable</code> reverses that.</li>
-    <li>Removing an app keeps its data in <code>/srv/offline/apps</code>. App data stays on this laptop and is not copied to the others.</li>
+    <li>Removing an app keeps its data in <code>/srv/offline/apps</code>. App data stays on this system and is not copied to the others.</li>
   </ul>
 </section>
 <?php page_end();

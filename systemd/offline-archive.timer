@@ -1,0 +1,11 @@
+[Unit]
+Description=Offline: look for websites waiting to be archived every hour
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=1h
+RandomizedDelaySec=5min
+Unit=offline-archive.service
+
+[Install]
+WantedBy=timers.target
