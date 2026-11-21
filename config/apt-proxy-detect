@@ -1,0 +1,27 @@
+#!/bin/bash
+#
+# Offline: tell apt whether the household's package cache is answering.
+#
+# apt runs this once for each plain-http archive it is about to contact and
+# reads one line back: the address of a proxy to use, or DIRECT. The caches to
+# try are listed in /etc/offline/apt-cache.hosts. If none answers within a
+# second, apt goes to the archive itself, so a laptop away from home is not
+# held up. Whatever the answer, apt still checks every index against Ubuntu's
+# signature and every package against the index.
+
+set -u
+readonly LIST=/etc/offline/apt-cache.hosts
+readonly PORT=3142
+
+if [[ -r "$LIST" ]]; then
+  while IFS= read -r host; do
+    # Host names and IPv4 addresses only; anything else in the file is ignored.
+    [[ "$host" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$ ]] || continue
+    # shellcheck disable=SC2016  # the inner shell expands its own arguments
+    if timeout 1 bash -c 'exec 3<>"/dev/tcp/$0/$1"' "$host" "$PORT" 2>/dev/null; then
+      printf 'http://%s:%s\n' "$host" "$PORT"
+      exit 0
+    fi
+  done <"$LIST"
+fi
+echo DIRECT

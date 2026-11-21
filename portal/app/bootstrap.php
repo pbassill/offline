@@ -129,7 +129,7 @@ function page_start(string $title, string $active, array $extraStyles = []): voi
     $host = (string) ($status['host']['name'] ?? gethostname());
     $nav = [
         'index' => ['Overview', 'fa-gauge'], 'library' => ['Library', 'fa-book-open'], 'media' => ['Media', 'fa-film'],
-        'maps' => ['Maps', 'fa-map-location-dot'], 'apps' => ['Apps', 'fa-table-cells-large'], 'radio' => ['Radio', 'fa-tower-broadcast'],
+        'maps' => ['Maps', 'fa-map-location-dot'], 'apps' => ['Apps', 'fa-table-cells-large'], 'games' => ['Games', 'fa-gamepad'], 'radio' => ['Radio', 'fa-tower-broadcast'],
         'peers' => ['Systems', 'fa-network-wired'], 'guide' => ['Guide', 'fa-circle-question'],
     ];
     ?>

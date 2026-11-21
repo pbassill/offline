@@ -15,7 +15,7 @@ set -Eeuo pipefail
 IFS=$'\n\t'
 umask 022
 
-readonly OFFLINE_VERSION="2.2.0"
+readonly OFFLINE_VERSION="2.3.0"
 readonly SHARE_ROOT="/srv/offline"
 readonly STATE_DIR="/var/lib/offline"
 readonly CONF_DIR="/etc/offline"
@@ -55,6 +55,10 @@ OPT_MAPS=""
 OPT_ROLE=""
 OPT_EXPOSE=""
 OPT_SERVERS=()
+OPT_GAMES=""
+OPT_HOST_GAMES=""
+OPT_HOTSPOT=no
+OPT_APT_CACHE=""
 
 STEPS_OK=()
 STEPS_FAILED=()
@@ -78,6 +82,13 @@ Usage: sudo ./install.sh [options]
   --apps "A B"         applications to install: names, "all" (the whole Project
                        NOMAD set; default on a workstation) or "none" (default
                        on a server) (see: offline apps)
+  --no-games           skip the children's games
+  --host-games         host the family Luanti worlds and the browser activities here
+                       (default on a server on the home network)
+  --hotspot            make this system a Wi-Fi access point of its own, for when
+                       the router is gone (needs a Wi-Fi adapter)
+  --apt-cache HOST     fetch Ubuntu packages through the household's package cache
+                       on HOST; this is how a system is rebuilt with no internet
   --no-radio           skip the radio tools (SDR, Meshtastic, handset programming)
   --with-radio         install the radio tools on a server
   --with-ai            install Ollama on a server
@@ -234,6 +245,14 @@ create_directories() {
   # here by other systems, and requests from people on this machine. Members of
   # the offline group may drop a request in the outbox but not list or remove
   # one another's.
+  # The family vault: ciphertext only. Its group may work in it whatever a program's
+  # umask, which is what lets one adult open what another saved.
+  install -d -m 2770 -o offline -g offline "$SHARE_ROOT/vault"
+  if command -v setfacl >/dev/null 2>&1; then
+    setfacl -m d:g:offline:rwx,d:m::rwx,g:offline:rwx "$SHARE_ROOT/vault" || true
+  fi
+  # Installer images for rebuilding a system.
+  install -d -m 2775 -o offline -g offline "$SHARE_ROOT/rebuild"
   install -d -m 0750 -o offline -g offline "$STATE_DIR/broadcasts" "$STATE_DIR/inbox"
   install -d -m 3730 -o offline -g offline "$STATE_DIR/outbox"
   # Application data belongs to the applications' own user ranges, not to the sharing account.
@@ -278,7 +297,10 @@ migrate_layout() {
 install_tools() {
   install -m 0755 -o root -g root "$SCRIPT_DIR/bin/offline" /usr/local/bin/offline
   install -m 0644 -o root -g root "$SCRIPT_DIR"/lib/*.php "$SCRIPT_DIR/config/catalogue.tsv" "$SCRIPT_DIR/config/maps.tsv" \
-    "$SCRIPT_DIR/config/sites.tsv" "$LIB_DIR/"
+    "$SCRIPT_DIR/config/sites.tsv" "$SCRIPT_DIR/config/packages.list" "$SCRIPT_DIR/config/offline-routing.container" "$LIB_DIR/"
+  install -m 0755 -o root -g root "$SCRIPT_DIR/config/apt-proxy-detect" "$LIB_DIR/apt-proxy-detect"
+  # Games: the list, the family-world units and their settings.
+  rsync --recursive --delete --chmod=D755,F644 --chown=root:root "$SCRIPT_DIR/games/" "$LIB_DIR/games/"
   # The desktop alert and the dialog that sends a family broadcast.
   install -d -m 0755 -o root -g root "$LIB_DIR/desktop"
   install -m 0755 -o root -g root "$SCRIPT_DIR/desktop/offline-alert-agent" "$SCRIPT_DIR/desktop/offline-broadcast-send" "$LIB_DIR/desktop/"
@@ -358,6 +380,19 @@ name_servers() {
   for server in "$@"; do
     /usr/local/bin/offline server add "$server"
   done
+}
+
+# Where this system asks the time and looks for packages: the household's own
+# servers first, wherever they have been named, now or on an earlier run.
+household_services() {
+  /usr/local/bin/offline time sources
+  /usr/local/bin/offline rebuild clients
+}
+
+# What a server on the home network offers the rest of the household.
+serve_household() {
+  /usr/local/bin/offline time serve on
+  /usr/local/bin/offline rebuild cache on
 }
 
 set_house_key() {
@@ -690,6 +725,10 @@ while (($# > 0)); do
     --no-radio) OPT_RADIO=no; shift ;;
     --with-radio) OPT_RADIO=yes; shift ;;
     --with-ai) OPT_AI=yes; shift ;;
+    --no-games) OPT_GAMES=no; shift ;;
+    --host-games) OPT_HOST_GAMES=yes; shift ;;
+    --hotspot) OPT_HOTSPOT=yes; shift ;;
+    --apt-cache) OPT_APT_CACHE="${2:?--apt-cache needs a host}"; shift 2 ;;
     --role) OPT_ROLE="${2:?--role needs a value}"; shift 2 ;;
     --server) OPT_SERVERS+=("${2:?--server needs a value}"); shift 2 ;;
     --expose) OPT_EXPOSE="${2:?--expose needs a value}"; shift 2 ;;
@@ -721,6 +760,7 @@ readonly TARGET_HOME
 [[ -n "$TARGET_HOME" && -d "$TARGET_HOME" ]] || { echo "Could not determine the home directory for $TARGET_USER" >&2; exit 1; }
 
 for required in bin/offline lib/core.php lib/cli.php lib/maps.php lib/apps.php lib/radio.php lib/server.php lib/broadcast.php \
+  lib/games.php lib/network.php lib/vault.php lib/rebuild.php games/games.tsv config/packages.list config/apt-proxy-detect \
   config/offline.conf config/catalogue.tsv config/maps.tsv config/sites.tsv config/rsyncd.conf config/stunnel.conf apps/apps.tsv \
   data/conditions.json portal/public/index.php systemd/offline-rsync.service systemd/offline-tls.service \
   systemd/offline-broadcast.service desktop/offline-alert-agent; do
@@ -756,7 +796,27 @@ if curl --silent --head --max-time 8 --proto '=https' --tlsv1.2 https://archive.
   ONLINE=yes
 fi
 readonly ONLINE
-say "  Network  $([[ "$ONLINE" == yes ]] && echo 'online' || echo 'offline: packages and downloads will be skipped')"
+[[ -z "$OPT_APT_CACHE" || "$OPT_APT_CACHE" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$ ]] ||
+  { echo "--apt-cache takes a host name or IPv4 address." >&2; exit 2; }
+# Ubuntu packages can be had from the internet or, failing that, from the household's cache.
+PACKAGES="$ONLINE"
+if [[ -n "$OPT_APT_CACHE" ]]; then
+  # shellcheck disable=SC2016  # the inner shell expands its own argument
+  if timeout 3 bash -c 'exec 3<>"/dev/tcp/$0/3142"' "$OPT_APT_CACHE" 2>/dev/null; then
+    PACKAGES=yes
+  else
+    echo "The package cache on $OPT_APT_CACHE does not answer on port 3142." >&2
+    exit 1
+  fi
+fi
+readonly PACKAGES
+if [[ "$ONLINE" == yes ]]; then
+  say "  Network  online$([[ -n "$OPT_APT_CACHE" ]] && echo ", packages through the cache on $OPT_APT_CACHE")"
+elif [[ "$PACKAGES" == yes ]]; then
+  say "  Network  offline: Ubuntu packages come from the cache on $OPT_APT_CACHE; other downloads are skipped"
+else
+  say "  Network  offline: packages and downloads will be skipped"
+fi
 
 # The scope chosen on the command line wins, then the existing setting, then "lan".
 SCOPE="$OPT_SCOPE"
@@ -801,11 +861,30 @@ else
   : "${OPT_AI:=yes}" "${OPT_MSTY:=yes}" "${OPT_JDOWNLOADER:=yes}" "${OPT_APPS:=all}" "${OPT_RADIO:=yes}"
 fi
 [[ "$ROLE" == server ]] && OPT_MSTY=no
+# Games are for workstations; the family worlds are hosted where the household's
+# content lives, unless asked for elsewhere. Never on a server that faces the internet.
+if [[ "$ROLE" == server ]]; then
+  : "${OPT_GAMES:=no}"
+  [[ "$EXPOSE" == lan ]] && : "${OPT_HOST_GAMES:=yes}"
+fi
+: "${OPT_GAMES:=yes}" "${OPT_HOST_GAMES:=no}"
+if [[ "$EXPOSE" == internet && ( "$OPT_HOST_GAMES" == yes || "$OPT_HOTSPOT" == yes ) ]]; then
+  die "A server exposed to the internet hosts no games and no hotspot. Leave out --host-games and --hotspot."
+fi
 
 say "  Role     $ROLE$([[ "$EXPOSE" == internet ]] && echo ', reachable from the internet by systems holding the house key')"
 say "  Scope    $([[ "$SCOPE" == lan ]] && echo 'portal open to this system and the home network' || echo 'portal on this system only')"
 
 export TARGET_USER TARGET_HOME SCOPE ARCH ROLE EXPOSE
+
+# With --apt-cache, every package request made during this run, by any step, goes
+# through the household's cache. apt still checks each index against Ubuntu's
+# signature and each package against the index, so the cache itself is not trusted.
+readonly INSTALL_PROXY_CONF=/etc/apt/apt.conf.d/01offline-install-cache
+if [[ -n "$OPT_APT_CACHE" && "$OPT_DRY_RUN" != yes ]]; then
+  printf '// Written by the Offline installer for the length of one run.\nAcquire::http::Proxy "http://%s:3142";\n' "$OPT_APT_CACHE" >"$INSTALL_PROXY_CONF"
+  trap 'rm -f -- "$INSTALL_PROXY_CONF"' EXIT
+fi
 export OFFLINE_INSTALL_KEY="$OPT_KEY"
 export DEBIAN_FRONTEND=noninteractive
 export NEEDRESTART_MODE=a
@@ -817,7 +896,7 @@ trap 'die "Unexpected failure at line $LINENO. See $LOG_FILE."' ERR
 # --------------------------------------------------------------------------
 
 section "Packages"
-if [[ "$ONLINE" == yes ]]; then
+if [[ "$PACKAGES" == yes ]]; then
   must "Refresh package lists" apt-get update
   if [[ "$OPT_UPGRADE" == yes ]]; then
     step "Upgrade installed packages" apt-get upgrade -y
@@ -827,7 +906,14 @@ if [[ "$ONLINE" == yes ]]; then
   must "Install core tools (rsync, stunnel, aria2, firewall, discovery)" \
     apt_install ca-certificates curl rsync stunnel4 aria2 ufw iproute2 avahi-daemon avahi-utils libnss-mdns inotify-tools
   must "Install the library reader (kiwix-tools)" apt_install kiwix-tools
-  must "Install the web portal stack (Apache, PHP-FPM)" apt_install apache2 php-fpm php-cli php-xml openssl
+  must "Install the web portal stack (Apache, PHP-FPM)" apt_install apache2 php-fpm php-cli php-xml php-mbstring openssl
+  step "Install the vault and rebuild tools (gocryptfs, signature checks)" apt_install gocryptfs fuse3 acl gpgv unzip qrencode
+  if [[ "$ROLE" == server && "$EXPOSE" == lan ]]; then
+    step "Install the household time service and package cache (chrony, apt-cacher-ng)" apt_install chrony apt-cacher-ng
+  fi
+  if [[ "$OPT_HOTSPOT" == yes ]]; then
+    step "Install the hotspot tools (NetworkManager, iw)" apt_install network-manager iw
+  fi
   step "Install map and container tools (git, Podman)" apt_install git podman netavark aardvark-dns crun uidmap pipx
   if [[ "$ROLE" == server ]]; then
     skip "Desktop applications (a server has no desktop)"
@@ -840,7 +926,7 @@ if [[ "$ONLINE" == yes ]]; then
 else
   skip "Package installation (no internet connection)"
   for required in rsync stunnel php aria2c kiwix-serve apache2ctl ufw; do
-    command -v "$required" >/dev/null 2>&1 || die "$required is not installed and this system is offline. Connect it to the internet for the first installation."
+    command -v "$required" >/dev/null 2>&1 || die "$required is not installed and this system is offline. Connect it to the internet for the first installation, or use the household's package cache: --apt-cache HOST"
   done
 fi
 
@@ -867,6 +953,13 @@ must "Start sharing, reader, broadcasts and timers" start_services
 if ((${#OPT_SERVERS[@]} > 0)); then
   step "Name the central servers: ${OPT_SERVERS[*]}" name_servers "${OPT_SERVERS[@]}"
 fi
+step "Use the household's own time servers and package cache where there are any" household_services
+if [[ "$ROLE" == server && "$EXPOSE" == lan ]]; then
+  step "Serve time and Ubuntu packages to the home network" serve_household
+fi
+if [[ "$OPT_HOTSPOT" == yes ]]; then
+  step "Turn on the Wi-Fi hotspot" /usr/local/bin/offline hotspot on --yes
+fi
 
 section "Maps"
 if [[ "$ONLINE" == yes ]]; then
@@ -874,6 +967,32 @@ if [[ "$ONLINE" == yes ]]; then
   step "Fetch the map viewer's fonts, symbols and world outline" /usr/local/bin/offline maps setup
 else
   skip "Map tool and viewer assets (no internet connection)"
+fi
+
+section "Games"
+if [[ "$OPT_GAMES" != yes && "$OPT_HOST_GAMES" != yes ]]; then
+  skip "Games ($([[ "$ROLE" == server ]] && echo 'a server that faces the internet hosts none' || echo '--no-games'))"
+else
+  if [[ "$OPT_GAMES" == yes && "$PACKAGES" == yes ]]; then
+    step "Install the children's games (Luanti, GCompris, Tux Paint and others)" /usr/local/bin/offline games install
+  elif [[ "$OPT_GAMES" == yes ]]; then
+    skip "Children's games (no source of packages)"
+  fi
+  if [[ "$ONLINE" == yes ]]; then
+    step "Fetch the Mineclonia game for Luanti (pinned)" /usr/local/bin/offline games setup
+  else
+    skip "Mineclonia (no internet connection)"
+  fi
+  if [[ "$OPT_HOST_GAMES" == yes ]]; then
+    if ! command -v podman >/dev/null 2>&1 && [[ "$OPT_DRY_RUN" != yes ]]; then
+      skip "Family worlds (Podman is not installed)"
+    elif [[ "$ONLINE" == yes || -f /etc/containers/systemd/offline-game-creative.container ]]; then
+      step "Host the family worlds (creative and gentle survival)" /usr/local/bin/offline games host all
+      step "Install the browser activities for tablets (Sugarizer, about 630 MiB)" /usr/local/bin/offline games activities
+    else
+      skip "Family worlds and browser activities (no internet connection)"
+    fi
+  fi
 fi
 
 section "Radio"
@@ -1008,6 +1127,9 @@ ${C_BOLD}Next${C_OFF}
   Archive UK websites         sudo offline queue site uk
   Queue a download            sudo offline queue add ADDRESS --to movies
   Release what has arrived    offline stage            then   sudo offline stage publish all
+  Hold packages for rebuilds  sudo offline rebuild warm        and   sudo offline rebuild image
+  Find places and routes      sudo offline maps places         and   sudo offline maps routing build uk
+  Be the house's Wi-Fi        sudo offline hotspot on          (needs a Wi-Fi adapter)
   Check health at any time    offline doctor
 
   Full log: $LOG_FILE
@@ -1024,10 +1146,12 @@ ${C_BOLD}Next${C_OFF}
   Join the other systems      sudo offline key show    then, on each of them:   sudo offline key set KEY
   Use a central server        sudo offline server add HOST
   Send a family broadcast     offline broadcast "Dinner is ready"
+  See the games               offline games            or   http://localhost/games.php
+  Keep the family's papers    offline vault init       then   offline vault open
   Check health at any time    offline doctor
 
   Log out and back in once so that $TARGET_USER can copy files into $SHARE_ROOT,
-  use the radio hardware, and see family broadcasts on the desktop.
+  use the radio hardware, open the vault, and see family broadcasts on the desktop.
   Full log: $LOG_FILE
 EOF
 fi

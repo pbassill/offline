@@ -18,6 +18,10 @@ require_once __DIR__ . '/apps.php';
 require_once __DIR__ . '/radio.php';
 require_once __DIR__ . '/server.php';
 require_once __DIR__ . '/broadcast.php';
+require_once __DIR__ . '/games.php';
+require_once __DIR__ . '/network.php';
+require_once __DIR__ . '/vault.php';
+require_once __DIR__ . '/rebuild.php';
 
 // ---------------------------------------------------------------------------
 // Output
@@ -499,9 +503,15 @@ function collect_status(): array
         'media' => $media,
         'services' => service_states(),
         'ai' => ['models' => ollama_models()],
-        'maps' => ['ready' => maps_ready(), 'regions' => installed_maps()],
+        'maps' => ['ready' => maps_ready(), 'regions' => installed_maps(), 'routing' => routing_status(),
+            'places' => read_json(places_dir() . '/places.json') + ['ready' => is_file(places_dir() . '/names.tsv')]],
         'apps' => array_values(app_states()),
         'radio' => radio_status(),
+        'games' => games_status(),
+        'hotspot' => ['set_up' => is_file(hotspot_profile_file()), 'on' => hotspot_active()],
+        'time_server' => time_serving(),
+        'vault' => vault_status(),
+        'rebuild' => rebuild_status(),
         'house_key' => is_file(path('key')) && (int) @filesize(path('key')) > 0,
         'role' => is_server() ? 'server' : 'workstation',
         'servers' => array_map(static fn (array $s): string => peer_key($s['host'], $s['port']), servers()),
@@ -731,6 +741,25 @@ function command_doctor(array $args): int
             'unknown' => 'not yet contacted',
             default => 'not reached at the last sync (expected when it is out of range)',
         }, 'sudo offline server test');
+    }
+    if ($status['vault']['ready']) {
+        $open = ((int) @fileperms(path('vault')) & 0007) !== 0;
+        $add('Family vault', $open ? 'fail' : 'ok', $open ? 'its folder is open to every local account' : plural($status['vault']['files'], 'encrypted file') . ', closed to other accounts',
+            'sudo chmod 2770 ' . path('vault'));
+    }
+    if ($status['role'] === 'server' && (string) config('SYNC_EXPOSE') !== 'internet') {
+        $add('Time service', $status['time_server'] ? 'ok' : 'warn', $status['time_server'] ? 'answering the home network' : 'this server is not serving time to the household', 'sudo offline time serve on');
+        $add('Package cache', $status['rebuild']['cache'] ? 'ok' : 'warn', $status['rebuild']['cache']
+            ? 'serving' . ($status['rebuild']['cache_offline_mode'] ? ' from what it holds (offline mode)' : '') : 'this server keeps no packages for rebuilding a system', 'sudo offline rebuild cache on');
+    }
+    $luanti = luanti_client_note();
+    if ($luanti !== null) {
+        $add('Luanti', 'warn', $luanti, 'upgrade this system to Ubuntu 26.04, or play the family worlds from one that has it');
+    }
+    foreach ($status['games']['worlds'] as $world) {
+        if ($world['hosted'] && prefix() === '') {
+            $add("World {$world['id']}", $world['state'] === 'active' ? 'ok' : 'warn', $world['state'] === 'active' ? "open on port {$world['port']}" : "hosted here but {$world['state']}", "sudo offline games start {$world['id']}");
+        }
     }
     if ($status['role'] === 'server' && ($status['queue']['states']['failed'] ?? 0) > 0) {
         $add('Download queue', 'warn', plural($status['queue']['states']['failed'], 'download') . ' failed', 'offline queue   then   sudo offline queue retry ID');
@@ -1506,7 +1535,8 @@ function plan_pull(string $module, array $remote, int &$budget, array &$counts):
     $incomingEditions = [];
     $rejected = read_json(path('state') . '/rejected.json');
     foreach ($remote as $file) {
-        if (!safe_relative_path($file['path']) || !in_array(extension($file['path']), $allowed, true)) {
+        // The vault holds ciphertext whose names say nothing; they are checked for shape, not type.
+        if ($module === 'vault' ? !vault_path_ok($file['path']) : (!safe_relative_path($file['path']) || !in_array(extension($file['path']), $allowed, true))) {
             $counts['filtered']++;
             continue;
         }
@@ -1515,7 +1545,9 @@ function plan_pull(string $module, array $remote, int &$budget, array &$counts):
             continue;
         }
         $local = $root . '/' . $file['path'];
-        if (is_file($local) && ((int) filesize($local) === $file['size'] || (int) filemtime($local) >= $file['mtime'])) {
+        // Content is skipped once a file of the same size is held. An encrypted document can
+        // change without changing size, so in the vault only an older copy is replaced.
+        if (is_file($local) && (($module !== 'vault' && (int) filesize($local) === $file['size']) || (int) filemtime($local) >= $file['mtime'])) {
             continue;
         }
         $parsed = extension($file['path']) === 'zim' ? parse_zim_name(basename($file['path'])) : null;
@@ -1549,7 +1581,7 @@ function pull_files(array $peer, string $module, array $files, bool $showProgres
     @unlink($log);
     $command = [
         'rsync', '--times', '--update', '--from0', '--files-from=' . $list, '--partial-dir=.rsync-partial',
-        '--no-motd', '--chmod=D2775,F664', '--timeout=300',
+        '--no-motd', $module === 'vault' ? '--chmod=D2770,F660' : '--chmod=D2775,F664', '--timeout=300',
         '--password-file=' . path('key'), '--log-file=' . $log, '--log-file-format=%n|%l',
     ];
     [$env, $conf] = tls_transport($peer);
@@ -1695,6 +1727,10 @@ function command_sync(array $args): int
         return $finish('ok', 'No other system found on the local network.');
     }
     $modules = array_values(array_intersect(preg_split('/[\s,]+/', (string) config('SYNC_MODULES')) ?: [], array_keys(SYNC_EXTENSIONS)));
+    // The family vault travels as ciphertext, to every system that keeps a folder for it.
+    if (config_bool('VAULT_SYNC') && is_dir(path('vault'))) {
+        $modules[] = 'vault';
+    }
     $budget = max(0, free_bytes() - config_int('SYNC_MIN_FREE_GB') * 1024 ** 3);
     $results = [];
     $totalFiles = 0;
@@ -1932,12 +1968,22 @@ function usage(): void
     out('  offline maps get REGION ... [--maxzoom N] [--dry-run] [--yes]');
     out('  offline maps get --bbox W,S,E,N --name NAME');
     out('  offline maps remove REGION');
+    out('  offline maps places                  fetch the place-name index for the map page\'s search');
+    out('  offline maps find TEXT               look a place, a UK postcode or coordinates up');
+    out('  offline maps routing [build REGION ...|on|off]   directions on the map page');
     out();
     out('Applications (run with sudo, except the list)');
     out('  offline apps                         applications on offer and their state');
     out('  offline apps add APP ...|all         install (all = the Project NOMAD set)');
     out('  offline apps start|stop|restart|enable|disable|remove|info APP');
     out('  offline apps pull APP ...|all        fetch images now, to install later without the internet');
+    out();
+    out('Games (run with sudo, except the list)');
+    out('  offline games                        games installed, family worlds and browser activities');
+    out('  offline games install [GAME ...]     install the desktop games');
+    out('  offline games host [WORLD|all]       host a family Luanti world (creative, survival)');
+    out('  offline games start|stop|restart|unhost WORLD');
+    out('  offline games activities [remove]    browser activities for tablets (Sugarizer)');
     out();
     out('Radio');
     out('  offline radio                        receivers and mesh nodes plugged in, tools installed');
@@ -1961,6 +2007,22 @@ function usage(): void
     out('  offline stage                        what has been downloaded and awaits release');
     out('  offline stage publish ID|all [--to FOLDER] | discard ID');
     out();
+    out('Family vault (run as yourself)');
+    out('  offline vault                        whether the encrypted family folder exists and is open');
+    out('  offline vault init | open [FOLDER] | close | passwd');
+    out();
+    out('Rebuilding and moving by disc (run with sudo, except the report)');
+    out('  offline rebuild [status --verify]    the package cache and installer images held');
+    out('  offline rebuild cache on|off | warm | offline on|off | image [desktop|live-server] | clients');
+    out('  offline export FOLDER [--what knowledge,media,maps,vault]   copy shared content to a disc');
+    out('  offline import FOLDER [--dry-run]    bring content in from a disc, through the usual filters');
+    out();
+    out('Network and clock (run with sudo, except the reports)');
+    out('  offline hotspot                      whether this system is acting as a Wi-Fi access point');
+    out('  offline hotspot on [--ssid NAME] [--interface IF] | show | off | remove');
+    out('  offline time                         the clock, and where it is set from');
+    out('  offline time serve on|off | sources  serve time to the home network; re-apply time servers');
+    out();
     out('Sharing (run with sudo)');
     out('  offline sync [--dry-run] [--force]   fetch new content from servers and peers now');
     out('  offline key [show|new|set [KEY]|refresh]   the house key every system must share');
@@ -1978,14 +2040,26 @@ function main(array $argv): int
     // Root is only needed for the house key and for installing applications.
     // Everything else, including read-only reporting, runs as the unprivileged
     // service account.
-    $keepsRoot = ['key', 'power', 'help', '--help', '-h', 'version', '--version', '-V'];
+    $keepsRoot = ['key', 'power', 'vault', 'help', '--help', '-h', 'version', '--version', '-V'];
     // Managing applications needs root; merely listing them does not.
-    if ($command === 'apps' && ($args[0] ?? 'list') !== 'list') {
-        $keepsRoot[] = 'apps';
+    if (in_array($command, ['apps', 'games'], true) && ($args[0] ?? 'list') !== 'list') {
+        $keepsRoot[] = $command;
+    }
+    // The hotspot and the time service are system settings; reporting on them is not.
+    if (in_array($command, ['hotspot', 'time'], true) && ($args[0] ?? 'status') !== 'status') {
+        $keepsRoot[] = $command;
+    }
+    // The package cache is a system service, and a disc may be readable by root alone.
+    if (($command === 'rebuild' && !in_array($args[0] ?? 'status', ['status', 'image'], true)) || in_array($command, ['export', 'import'], true)) {
+        $keepsRoot[] = $command;
     }
     // Radio commands talk to USB devices as whoever ran them; only the firmware fetch writes shared content.
     if ($command === 'radio' && ($args[0] ?? '') !== 'firmware') {
         $keepsRoot[] = 'radio';
+    }
+    // Building a routing graph and switching directions on both start containers.
+    if ($command === 'maps' && ($args[0] ?? '') === 'routing' && in_array($args[1] ?? '', ['build', 'on', 'off'], true)) {
+        $keepsRoot[] = 'maps';
     }
     // Naming a server edits the settings and the firewall of the sync job; archiving a site runs a container.
     if (($command === 'server' && in_array($args[0] ?? '', ['add', 'remove'], true)) || ($command === 'queue' && ($args[0] ?? '') === 'archive')) {
@@ -2015,6 +2089,13 @@ function main(array $argv): int
         'maps' => command_maps($args),
         'apps' => command_apps($args),
         'radio' => command_radio($args),
+        'games' => command_games($args),
+        'hotspot' => command_hotspot($args),
+        'vault' => command_vault($args),
+        'rebuild' => command_rebuild($args),
+        'export' => command_export($args),
+        'import' => command_import($args),
+        'time' => command_time($args),
         'server', 'servers' => command_server($args),
         'queue' => command_queue($args),
         'stage', 'staging' => command_stage($args),

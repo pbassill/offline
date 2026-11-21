@@ -960,7 +960,7 @@ td.is-off {
 }
 
 /* Fixed-width letters are wider: between the menu breakpoint and a roomy screen, tighten the masthead so it fits. */
-@media (min-width: 1200px) and (max-width: 1439.98px) {
+@media (min-width: 1200px) and (max-width: 1499.98px) {
   [data-theme="vt100"] .masthead .nav-link {
     padding-inline: 0.4rem;
   }
@@ -972,4 +972,119 @@ td.is-off {
   [data-theme="vt100"] .brand-host {
     display: none;
   }
+}
+
+/* Map page: place search and directions. */
+
+:root,
+[data-theme="light"] {
+  --o-route: #b3261e;
+}
+
+[data-theme="dark"] {
+  --o-route: #ff8a80;
+}
+
+[data-theme="vt100"] {
+  --o-route: #3dff7f;
+}
+
+.map-search {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.map-search .form-control,
+.map-route .form-select {
+  background: var(--o-surface);
+  color: var(--o-ink);
+  border-color: var(--o-rule);
+}
+
+.map-results {
+  margin-top: 0.5rem;
+}
+
+.map-results .row-meta {
+  display: flex;
+  gap: 0.25rem;
+}
+
+.map-route-ends {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-block: 0.5rem;
+}
+
+.map-route-summary {
+  font-weight: 500;
+  margin: 0.5rem 0 0.25rem;
+}
+
+.map-route-steps {
+  padding-left: 1.25rem;
+  font-size: 0.9375rem;
+  max-height: 22rem;
+  overflow-y: auto;
+}
+
+.map-route-steps li + li {
+  margin-top: 0.3rem;
+}
+
+.map-picking {
+  cursor: crosshair;
+}
+
+.map-pin {
+  width: 1.1rem;
+  height: 1.1rem;
+  border-radius: 50%;
+  border: 3px solid #ffffff;
+  background: var(--o-accent);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45);
+}
+
+.map-pin-from {
+  background: var(--o-ok);
+}
+
+.map-pin-to {
+  background: var(--o-route);
+}
+
+[data-theme="vt100"] .map-pin {
+  border-radius: 0;
+  border-color: #000000;
+}
+
+/*
+ * Nine destinations do not fit beside the theme switch on a small laptop screen.
+ * Between the menu breakpoint and a roomy screen the masthead drops its
+ * decoration: the navigation loses its icons and the theme switch its words.
+ */
+@media (min-width: 1200px) and (max-width: 1499.98px) {
+  .masthead .nav-link {
+    padding-inline: 0.5rem;
+  }
+
+  .masthead .nav-link > i,
+  .brand-host {
+    display: none;
+  }
+
+  .theme-switch .btn {
+    font-size: 0;
+    padding-inline: 0.55rem;
+  }
+
+  .theme-switch .btn > i {
+    font-size: 1rem;
+  }
+}
+
+/* Fixed-width letters are wider at every size, and a terminal had no pictures: its destinations are words alone. */
+[data-theme="vt100"] .masthead .nav-link > i {
+  display: none;
 }

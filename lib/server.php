@@ -128,6 +128,10 @@ function command_server(array $args): int
         $updated[] = ['host' => $name, 'port' => (int) $port];
     }
     apply_server_network_policy($updated);
+    // A server on the home network is also where this system may ask the time.
+    time_apply_sources();
+    // ... and for packages, if it keeps a cache of them.
+    apt_client_apply();
     out($action === 'add' ? "Server {$m[1]} added. Check the link with: sudo offline server test" : "Server {$m[1]} removed.");
     return 0;
 }

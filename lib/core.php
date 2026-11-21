@@ -11,7 +11,7 @@ declare(strict_types=1);
 
 namespace Offline;
 
-const VERSION = '2.2.0';
+const VERSION = '2.3.0';
 /** The sharing daemon itself, on 127.0.0.1 only. */
 const SYNC_PORT = 47001;
 /** What other systems connect to: the same daemon behind TLS keyed from the house key. */
@@ -31,7 +31,8 @@ const SYNC_EXTENSIONS = [
         'pdf', 'epub', 'cbz', 'txt', 'nfo',
     ],
     // Map regions, plus the fonts and symbols the map viewer draws with.
-    'maps' => ['pmtiles', 'pbf', 'png', 'json'],
+    // ... the place-search index, which is plain text, and the routing graph, which is one archive of data.
+    'maps' => ['pmtiles', 'pbf', 'png', 'json', 'tsv', 'tar'],
 ];
 
 /** Formats a web browser can play without help. */
@@ -52,6 +53,8 @@ const DEFAULTS = [
     'SYNC_MIN_BATTERY' => '30',
     'SYNC_BWLIMIT_KBPS' => '0',
     'SYNC_SCAN_FALLBACK' => 'yes',
+    'VAULT_SYNC' => 'yes',
+    'VAULT_IDLE_MINUTES' => '30',
     'AUTO_PRUNE' => 'yes',
     'DOWNLOAD_CONNECTIONS' => '4',
     'DOWNLOAD_MIN_FREE_GB' => '5',
@@ -83,6 +86,7 @@ function path(string $key): string
         'incoming' => '/srv/offline/knowledge/zim/.incoming',
         'media' => '/srv/offline/media',
         'maps' => '/srv/offline/maps',
+        'vault' => '/srv/offline/vault',
         'maps_assets' => '/srv/offline/maps/assets',
         'maps_catalogue' => '/usr/local/lib/offline/maps.tsv',
         'maps_catalogue_local' => '/etc/offline/maps.local.tsv',
@@ -525,4 +529,75 @@ function radio_devices(): array
         }
     }
     return $devices;
+}
+
+// ---------------------------------------------------------------------------
+// Place search (read by the command and by the map page)
+// ---------------------------------------------------------------------------
+
+function places_dir(): string
+{
+    return path('maps') . '/places';
+}
+
+/** Lower-case, accents folded, punctuation dropped: how names and questions are compared. */
+function places_key(string $text): string
+{
+    $ascii = @iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $text);
+    $key = strtolower($ascii === false ? $text : $ascii);
+    return trim(preg_replace('/[^a-z0-9]+/', ' ', $key) ?? '');
+}
+
+/**
+ * Find places. Coordinates are recognised, then UK postcodes, then names: an
+ * exact name first, then names that begin with the words typed, then names that
+ * contain them. Reads the index only; used by the command and by the portal.
+ */
+function places_search(string $query, int $limit = 12): array
+{
+    $query = trim(mb_substr($query, 0, 80));
+    $dir = places_dir();
+    if (preg_match('/^(-?\d{1,2}(?:\.\d+)?)\s*[, ]\s*(-?\d{1,3}(?:\.\d+)?)$/', $query, $m) === 1 && abs((float) $m[1]) <= 90 && abs((float) $m[2]) <= 180) {
+        return [['name' => sprintf('%.5f, %.5f', (float) $m[1], (float) $m[2]), 'detail' => 'Coordinates', 'lat' => (float) $m[1], 'lon' => (float) $m[2], 'kind' => 'coordinates']];
+    }
+    $results = [];
+    $code = strtoupper(str_replace(' ', '', $query));
+    if (preg_match('/^([A-Z]{1,2})\d[A-Z\d]{0,5}$/', $code, $m) === 1 && is_file("$dir/postcodes/{$m[1]}.tsv")) {
+        $handle = fopen("$dir/postcodes/{$m[1]}.tsv", 'r');
+        while ($handle !== false && ($line = fgets($handle)) !== false && count($results) < $limit) {
+            if (str_starts_with($line, $code)) {
+                $c = explode("\t", rtrim($line, "\n"));
+                $pretty = substr($c[0], 0, -3) . ' ' . substr($c[0], -3);
+                $entry = ['name' => $pretty, 'detail' => trim(($c[3] ?? '') . ', postcode', ', '), 'lat' => (float) $c[1], 'lon' => (float) $c[2], 'kind' => 'postcode'];
+                $c[0] === $code ? array_unshift($results, $entry) : $results[] = $entry;
+            }
+        }
+        if ($results !== []) {
+            return \array_slice($results, 0, $limit);
+        }
+    }
+    $key = places_key($query);
+    if (\strlen($key) < 2 || !is_file("$dir/names.tsv")) {
+        return [];
+    }
+    $exact = [];
+    $prefix = [];
+    $contains = [];
+    $handle = fopen("$dir/names.tsv", 'r');
+    while ($handle !== false && ($line = fgets($handle)) !== false && count($exact) + count($prefix) < $limit * 4) {
+        $tab = strpos($line, "\t");
+        if ($tab === false || ($at = strpos(substr($line, 0, $tab), $key)) === false) {
+            continue;
+        }
+        $c = explode("\t", rtrim($line, "\n"));
+        $entry = ['name' => $c[1], 'detail' => $c[2] ?? '', 'lat' => (float) ($c[3] ?? 0), 'lon' => (float) ($c[4] ?? 0), 'kind' => $c[5] ?? 'place'];
+        if ($c[0] === $key) {
+            $exact[] = $entry;
+        } elseif ($at === 0) {
+            $prefix[] = $entry;
+        } elseif (count($contains) < $limit) {
+            $contains[] = $entry;
+        }
+    }
+    return \array_slice(array_merge($exact, $prefix, $contains), 0, $limit);
 }

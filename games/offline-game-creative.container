@@ -1,0 +1,36 @@
+# Offline family world: creative building (Luanti with the Mineclonia game).
+# Installed, started and removed with "sudo offline games". The server runs as an
+# unprivileged user in its own range of host accounts, holds no capabilities, cannot gain
+# privileges, and sees a read-only system: the only thing it can write is its own world.
+# A port published by a container engine passes around the host firewall, so the rule
+# that a world is for private networks is carried by the service itself: systemd
+# filters every packet to and from the server's sockets, and the server can neither
+# be reached from a public address nor reach one.
+
+[Unit]
+Description=Offline family world: creative building
+Documentation=https://github.com/pbassill/offline
+After=network-online.target
+Wants=network-online.target
+
+[Container]
+ContainerName=offline-game-creative
+Image=ghcr.io/luanti-org/luanti:5.17.0@sha256:db682caec367977ac2661c81e3cdbd1f1dbbae596f6fa7d791c0031107d59947
+PublishPort=30000:30000/udp
+Volume=/usr/local/share/offline/luanti/games/mineclonia:/usr/local/share/luanti/games/mineclonia:ro
+Volume=/etc/offline/games/creative.conf:/etc/minetest/minetest.conf:ro
+Volume=/srv/offline/apps/luanti/creative:/var/lib/minetest:U
+Exec=--config /etc/minetest/minetest.conf --gameid mineclonia --world /var/lib/minetest/worlds/family
+NoNewPrivileges=true
+DropCapability=all
+ReadOnly=true
+Tmpfs=/tmp
+LogDriver=journald
+PodmanArgs=--pull=never --uidmap=0:2800000:65536 --gidmap=0:2800000:65536 --memory=3g --pids-limit=256
+
+[Service]
+IPAddressDeny=any
+IPAddressAllow=localhost 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 169.254.0.0/16
+Restart=on-failure
+RestartSec=15
+TimeoutStartSec=300
