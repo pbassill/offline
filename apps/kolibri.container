@@ -1,0 +1,26 @@
+# Offline application: Kolibri
+# Installed, started and removed with "sudo offline apps". The container's root user is
+# mapped to an unprivileged range on the host, it cannot gain privileges, and its port is
+# published on 127.0.0.1 only.
+
+[Unit]
+Description=Offline app: Kolibri
+Documentation=https://github.com/pbassill/offline
+After=network-online.target
+Wants=network-online.target
+
+[Container]
+ContainerName=offline-app-kolibri
+Image=docker.io/learningequality/kolibri:0.19.4@sha256:722a5d64bdd695248f83bdccecbd4774ad85de7ddd99339a6f81a4959c597386
+PublishPort=127.0.0.1:18310:8080
+PublishPort=127.0.0.1:18311:8311
+Volume=/srv/offline/apps/kolibri/home:/kolibri:U
+Environment=KOLIBRI_ZIP_CONTENT_PORT=8311
+NoNewPrivileges=true
+LogDriver=journald
+PodmanArgs=--pull=never --uidmap=0:1900000:65536 --gidmap=0:1900000:65536 --memory=768m --pids-limit=512
+
+[Service]
+Restart=on-failure
+RestartSec=15
+TimeoutStartSec=300

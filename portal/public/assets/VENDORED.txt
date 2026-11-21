@@ -1,0 +1,15 @@
+Vendored front-end assets, served locally so the portal works with no internet.
+
+Bootstrap 5.3.9             MIT licence, see bootstrap/LICENSE
+Font Awesome Free 7.3.1     icons CC BY 4.0, fonts SIL OFL 1.1, code MIT, see fontawesome/LICENSE.txt
+MapLibre GL JS 6.19.0       BSD 3-Clause, see maplibre/LICENSE.txt
+PMTiles 4.5.0               BSD 3-Clause, see protomaps/LICENSE-pmtiles.txt
+Protomaps basemaps 5.7.2    BSD 3-Clause, see protomaps/LICENSE-basemaps.txt
+
+All were taken unmodified from the official npm packages (bootstrap,
+@fortawesome/fontawesome-free, maplibre-gl, pmtiles, @protomaps/basemaps) and are
+byte-for-byte identical to them. SHA-256 checksums of every file are in CHECKSUMS
+and are checked by the tests.
+
+The map fonts and symbols are not kept here: "offline maps setup" fetches them from
+protomaps/basemaps-assets at a pinned commit (fonts SIL OFL 1.1).

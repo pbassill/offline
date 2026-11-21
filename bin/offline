@@ -1,0 +1,28 @@
+#!/usr/bin/php
+<?php
+/**
+ * offline — manage this laptop's offline library.
+ * See "offline help". Source: https://github.com/pbassill/offline
+ */
+
+declare(strict_types=1);
+
+if (PHP_SAPI !== 'cli') {
+    exit(1);
+}
+error_reporting(E_ALL);
+ini_set('display_errors', 'stderr');
+ini_set('memory_limit', '256M');
+date_default_timezone_set('UTC');
+
+// The test suite points the tool at a scratch directory. sudo strips this
+// variable, so it cannot be used to redirect a privileged run.
+$prefix = getenv('OFFLINE_PREFIX');
+if (is_string($prefix) && $prefix !== '' && $prefix[0] === '/' && is_dir($prefix)) {
+    define('OFFLINE_PREFIX', $prefix);
+}
+
+$lib = is_file(__DIR__ . '/../lib/cli.php') ? __DIR__ . '/../lib' : '/usr/local/lib/offline';
+require $lib . '/cli.php';
+
+exit(Offline\main($argv));

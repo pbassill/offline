@@ -1,0 +1,28 @@
+# Offline application: Stirling PDF
+# Installed, started and removed with "sudo offline apps". The container's root user is
+# mapped to an unprivileged range on the host, it cannot gain privileges, and its port is
+# published on 127.0.0.1 only.
+
+[Unit]
+Description=Offline app: Stirling PDF
+Documentation=https://github.com/pbassill/offline
+After=network-online.target
+Wants=network-online.target
+
+[Container]
+ContainerName=offline-app-stirling-pdf
+Image=ghcr.io/stirling-tools/s-pdf:2.13.1@sha256:d5ff678ecacdb26b4b7892534540de64a04458b8aaa0a4f9daf2852221646f71
+PublishPort=127.0.0.1:18400:8080
+Volume=/srv/offline/apps/stirling-pdf/configs:/configs:U
+Volume=/srv/offline/apps/stirling-pdf/logs:/logs:U
+Environment=SECURITY_ENABLELOGIN=false
+Environment=LANGS=en_GB
+Environment=SYSTEM_ENABLEANALYTICS=false
+NoNewPrivileges=true
+LogDriver=journald
+PodmanArgs=--pull=never --uidmap=0:2200000:65536 --gidmap=0:2200000:65536 --memory=2g --pids-limit=512
+
+[Service]
+Restart=on-failure
+RestartSec=15
+TimeoutStartSec=300

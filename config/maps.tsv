@@ -1,0 +1,71 @@
+# Offline map regions.
+# Columns, separated by single tabs: id, group, name, kind, value, approximate size in MiB.
+#   kind bbox: value is west,south,east,north in degrees. The region is cut from the
+#              current Protomaps world build (OpenStreetMap data) when it is fetched.
+#   kind url:  value is a ready-made .pmtiles file. The us-* groups are the regional
+#              map collections of Project NOMAD (Apache License 2.0).
+# Any other area can be fetched with: sudo offline maps get --bbox W,S,E,N --name NAME
+# Put your own regions in /etc/offline/maps.local.tsv using the same layout.
+uk	europe	United Kingdom	bbox	-8.7,49.8,1.8,60.9	0
+ireland	europe	Ireland	bbox	-10.7,51.35,-5.35,55.45	0
+france	europe	France	bbox	-5.3,41.3,9.7,51.15	0
+spain	europe	Spain and the Balearic Islands	bbox	-9.4,35.9,4.4,43.85	0
+canary-islands	europe	Canary Islands	bbox	-18.25,27.55,-13.3,29.5	0
+portugal	europe	Portugal	bbox	-9.6,36.9,-6.15,42.2	0
+belgium	europe	Belgium	bbox	2.5,49.45,6.45,51.55	0
+netherlands	europe	Netherlands	bbox	3.3,50.7,7.3,53.6	0
+germany	europe	Germany	bbox	5.8,47.2,15.1,55.1	0
+switzerland	europe	Switzerland	bbox	5.9,45.8,10.5,47.85	0
+austria	europe	Austria	bbox	9.5,46.35,17.2,49.05	0
+italy	europe	Italy	bbox	6.6,36.6,18.6,47.1	0
+denmark	europe	Denmark	bbox	8.0,54.5,15.3,57.8	0
+alaska	us-pacific	Alaska	url	https://github.com/Crosstalk-Solutions/project-nomad-maps/raw/refs/heads/master/pmtiles/alaska_2025-12.pmtiles	684
+california	us-pacific	California	url	https://github.com/Crosstalk-Solutions/project-nomad-maps/raw/refs/heads/master/pmtiles/california_2025-12.pmtiles	1100
+hawaii	us-pacific	Hawaii	url	https://github.com/Crosstalk-Solutions/project-nomad-maps/raw/refs/heads/master/pmtiles/hawaii_2025-12.pmtiles	28
+oregon	us-pacific	Oregon	url	https://github.com/Crosstalk-Solutions/project-nomad-maps/raw/refs/heads/master/pmtiles/oregon_2025-12.pmtiles	379
+washington	us-pacific	Washington	url	https://github.com/Crosstalk-Solutions/project-nomad-maps/raw/refs/heads/master/pmtiles/washington_2025-12.pmtiles	466
+arizona	us-mountain	Arizona	url	https://github.com/Crosstalk-Solutions/project-nomad-maps/raw/refs/heads/master/pmtiles/arizona_2025-12.pmtiles	400
+colorado	us-mountain	Colorado	url	https://github.com/Crosstalk-Solutions/project-nomad-maps/raw/refs/heads/master/pmtiles/colorado_2025-12.pmtiles	450
+idaho	us-mountain	Idaho	url	https://github.com/Crosstalk-Solutions/project-nomad-maps/raw/refs/heads/master/pmtiles/idaho_2025-12.pmtiles	220
+montana	us-mountain	Montana	url	https://github.com/Crosstalk-Solutions/project-nomad-maps/raw/refs/heads/master/pmtiles/montana_2025-12.pmtiles	270
+nevada	us-mountain	Nevada	url	https://github.com/Crosstalk-Solutions/project-nomad-maps/raw/refs/heads/master/pmtiles/nevada_2025-12.pmtiles	200
+new-mexico	us-mountain	New Mexico	url	https://github.com/Crosstalk-Solutions/project-nomad-maps/raw/refs/heads/master/pmtiles/new_mexico_2025-12.pmtiles	230
+utah	us-mountain	Utah	url	https://github.com/Crosstalk-Solutions/project-nomad-maps/raw/refs/heads/master/pmtiles/utah_2025-12.pmtiles	240
+wyoming	us-mountain	Wyoming	url	https://github.com/Crosstalk-Solutions/project-nomad-maps/raw/refs/heads/master/pmtiles/wyoming_2025-12.pmtiles	210
+arkansas	us-west-south-central	Arkansas	url	https://github.com/Crosstalk-Solutions/project-nomad-maps/raw/refs/heads/master/pmtiles/arkansas_2025-12.pmtiles	400
+oklahoma	us-west-south-central	Oklahoma	url	https://github.com/Crosstalk-Solutions/project-nomad-maps/raw/refs/heads/master/pmtiles/oklahoma_2025-12.pmtiles	400
+louisiana	us-west-south-central	Louisiana	url	https://github.com/Crosstalk-Solutions/project-nomad-maps/raw/refs/heads/master/pmtiles/louisiana_2025-12.pmtiles	400
+texas	us-west-south-central	Texas	url	https://github.com/Crosstalk-Solutions/project-nomad-maps/raw/refs/heads/master/pmtiles/texas_2025-12.pmtiles	400
+alabama	us-east-south-central	Alabama	url	https://github.com/Crosstalk-Solutions/project-nomad-maps/raw/refs/heads/master/pmtiles/alabama_2025-12.pmtiles	400
+kentucky	us-east-south-central	Kentucky	url	https://github.com/Crosstalk-Solutions/project-nomad-maps/raw/refs/heads/master/pmtiles/kentucky_2025-12.pmtiles	400
+mississippi	us-east-south-central	Mississippi	url	https://github.com/Crosstalk-Solutions/project-nomad-maps/raw/refs/heads/master/pmtiles/mississippi_2025-12.pmtiles	400
+tennessee	us-east-south-central	Tennessee	url	https://github.com/Crosstalk-Solutions/project-nomad-maps/raw/refs/heads/master/pmtiles/tennessee_2025-12.pmtiles	400
+delaware	us-south-atlantic	Delaware	url	https://github.com/Crosstalk-Solutions/project-nomad-maps/raw/refs/heads/master/pmtiles/delaware_2025-12.pmtiles	400
+florida	us-south-atlantic	Florida	url	https://github.com/Crosstalk-Solutions/project-nomad-maps/raw/refs/heads/master/pmtiles/florida_2025-12.pmtiles	400
+georgia	us-south-atlantic	Georgia	url	https://github.com/Crosstalk-Solutions/project-nomad-maps/raw/refs/heads/master/pmtiles/georgia_2025-12.pmtiles	400
+maryland	us-south-atlantic	Maryland	url	https://github.com/Crosstalk-Solutions/project-nomad-maps/raw/refs/heads/master/pmtiles/maryland_2025-12.pmtiles	400
+north-carolina	us-south-atlantic	North_Carolina	url	https://github.com/Crosstalk-Solutions/project-nomad-maps/raw/refs/heads/master/pmtiles/north_carolina_2025-12.pmtiles	400
+south-carolina	us-south-atlantic	South_Carolina	url	https://github.com/Crosstalk-Solutions/project-nomad-maps/raw/refs/heads/master/pmtiles/south_carolina_2025-12.pmtiles	400
+virginia	us-south-atlantic	Virginia	url	https://github.com/Crosstalk-Solutions/project-nomad-maps/raw/refs/heads/master/pmtiles/virginia_2025-12.pmtiles	400
+west-virginia	us-south-atlantic	West_Virginia	url	https://github.com/Crosstalk-Solutions/project-nomad-maps/raw/refs/heads/master/pmtiles/west_virginia_2025-12.pmtiles	400
+iowa	us-west-north-central	Iowa	url	https://github.com/Crosstalk-Solutions/project-nomad-maps/raw/refs/heads/master/pmtiles/iowa_2025-12.pmtiles	400
+kansas	us-west-north-central	Kansas	url	https://github.com/Crosstalk-Solutions/project-nomad-maps/raw/refs/heads/master/pmtiles/kansas_2025-12.pmtiles	400
+minnesota	us-west-north-central	Minnesota	url	https://github.com/Crosstalk-Solutions/project-nomad-maps/raw/refs/heads/master/pmtiles/minnesota_2025-12.pmtiles	400
+missouri	us-west-north-central	Missouri	url	https://github.com/Crosstalk-Solutions/project-nomad-maps/raw/refs/heads/master/pmtiles/missouri_2025-12.pmtiles	400
+nebraska	us-west-north-central	Nebraska	url	https://github.com/Crosstalk-Solutions/project-nomad-maps/raw/refs/heads/master/pmtiles/nebraska_2025-12.pmtiles	400
+north-dakota	us-west-north-central	North_Dakota	url	https://github.com/Crosstalk-Solutions/project-nomad-maps/raw/refs/heads/master/pmtiles/north_dakota_2025-12.pmtiles	400
+south-dakota	us-west-north-central	South_Dakota	url	https://github.com/Crosstalk-Solutions/project-nomad-maps/raw/refs/heads/master/pmtiles/south_dakota_2025-12.pmtiles	400
+illinois	us-east-north-central	Illinois	url	https://github.com/Crosstalk-Solutions/project-nomad-maps/raw/refs/heads/master/pmtiles/illinois_2025-12.pmtiles	400
+indiana	us-east-north-central	Indiana	url	https://github.com/Crosstalk-Solutions/project-nomad-maps/raw/refs/heads/master/pmtiles/indiana_2025-12.pmtiles	400
+michigan	us-east-north-central	Michigan	url	https://github.com/Crosstalk-Solutions/project-nomad-maps/raw/refs/heads/master/pmtiles/michigan_2025-12.pmtiles	400
+ohio	us-east-north-central	Ohio	url	https://github.com/Crosstalk-Solutions/project-nomad-maps/raw/refs/heads/master/pmtiles/ohio_2025-12.pmtiles	400
+wisconsin	us-east-north-central	Wisconsin	url	https://github.com/Crosstalk-Solutions/project-nomad-maps/raw/refs/heads/master/pmtiles/wisconsin_2025-12.pmtiles	400
+new-jersey	us-mid-atlantic	New_Jersey	url	https://github.com/Crosstalk-Solutions/project-nomad-maps/raw/refs/heads/master/pmtiles/new_jersey_2025-12.pmtiles	400
+new-york	us-mid-atlantic	New_York	url	https://github.com/Crosstalk-Solutions/project-nomad-maps/raw/refs/heads/master/pmtiles/new_york_2025-12.pmtiles	400
+pennsylvania	us-mid-atlantic	Pennsylvania	url	https://github.com/Crosstalk-Solutions/project-nomad-maps/raw/refs/heads/master/pmtiles/pennsylvania_2025-12.pmtiles	400
+connecticut	us-new-england	Connecticut	url	https://github.com/Crosstalk-Solutions/project-nomad-maps/raw/refs/heads/master/pmtiles/connecticut_2025-12.pmtiles	400
+maine	us-new-england	Maine	url	https://github.com/Crosstalk-Solutions/project-nomad-maps/raw/refs/heads/master/pmtiles/maine_2025-12.pmtiles	400
+massachusetts	us-new-england	Massachusetts	url	https://github.com/Crosstalk-Solutions/project-nomad-maps/raw/refs/heads/master/pmtiles/massachusetts_2025-12.pmtiles	400
+new-hampshire	us-new-england	New_Hampshire	url	https://github.com/Crosstalk-Solutions/project-nomad-maps/raw/refs/heads/master/pmtiles/new_hampshire_2025-12.pmtiles	400
+rhode-island	us-new-england	Rhode_Island	url	https://github.com/Crosstalk-Solutions/project-nomad-maps/raw/refs/heads/master/pmtiles/rhode_island_2025-12.pmtiles	400
+vermont	us-new-england	Vermont	url	https://github.com/Crosstalk-Solutions/project-nomad-maps/raw/refs/heads/master/pmtiles/vermont_2025-12.pmtiles	400

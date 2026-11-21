@@ -1,0 +1,26 @@
+# Offline application: Vaultwarden
+# Installed, started and removed with "sudo offline apps". The container's root user is
+# mapped to an unprivileged range on the host, it cannot gain privileges, and its port is
+# published on 127.0.0.1 only.
+
+[Unit]
+Description=Offline app: Vaultwarden
+Documentation=https://github.com/pbassill/offline
+After=network-online.target
+Wants=network-online.target
+
+[Container]
+ContainerName=offline-app-vaultwarden
+Image=docker.io/vaultwarden/server:1.36.0@sha256:d626d04934cd1192ad8ced1adb975099fca78cec33ab467d2d3c923cde7f3b0c
+PublishPort=127.0.0.1:18480:80
+Volume=/srv/offline/apps/vaultwarden/data:/data:U
+Environment=SIGNUPS_ALLOWED=true
+Environment=WEBSOCKET_ENABLED=true
+NoNewPrivileges=true
+LogDriver=journald
+PodmanArgs=--pull=never --uidmap=0:1800000:65536 --gidmap=0:1800000:65536 --memory=256m --pids-limit=512
+
+[Service]
+Restart=on-failure
+RestartSec=15
+TimeoutStartSec=300

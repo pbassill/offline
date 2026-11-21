@@ -1,0 +1,9 @@
+[Unit]
+Description=Offline: watch the library folder for added or removed titles
+
+[Path]
+PathChanged=/srv/offline/knowledge/zim
+Unit=offline-library.service
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,25 @@
+# Offline application: Qdrant
+# Installed, started and removed with "sudo offline apps". The container's root user is
+# mapped to an unprivileged range on the host, it cannot gain privileges, and its port is
+# published on 127.0.0.1 only.
+
+[Unit]
+Description=Offline app: Qdrant
+Documentation=https://github.com/pbassill/offline
+After=network-online.target
+Wants=network-online.target
+
+[Container]
+ContainerName=offline-app-qdrant
+Image=docker.io/qdrant/qdrant:v1.16@sha256:0425e3e03e7fd9b3dc95c4214546afe19de2eb2e28ca621441a56663ac6e1f46
+PublishPort=127.0.0.1:16333:6333
+Volume=/srv/offline/apps/qdrant/storage:/qdrant/storage:U
+Environment=QDRANT__TELEMETRY_DISABLED=true
+NoNewPrivileges=true
+LogDriver=journald
+PodmanArgs=--pull=never --uidmap=0:2300000:65536 --gidmap=0:2300000:65536 --memory=1g --pids-limit=512
+
+[Service]
+Restart=on-failure
+RestartSec=15
+TimeoutStartSec=300

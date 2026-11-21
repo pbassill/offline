@@ -1,0 +1,33 @@
+# Offline application: Open WebUI
+# Installed, started and removed with "sudo offline apps". The container's root user is
+# mapped to an unprivileged range on the host, it cannot gain privileges, and its port is
+# published on 127.0.0.1 only.
+
+[Unit]
+Description=Offline app: Open WebUI
+Documentation=https://github.com/pbassill/offline
+After=network-online.target
+Wants=network-online.target
+
+[Container]
+ContainerName=offline-app-open-webui
+Image=ghcr.io/open-webui/open-webui:v0.13.4@sha256:d5168bfbc28609eff5bea1b438dd864cf64d185cf6582c02244865e18385b901
+# Shares the host network so that it can reach Ollama, which listens on 127.0.0.1 only.
+Network=host
+Volume=/srv/offline/apps/open-webui/data:/app/backend/data:U
+Environment=HOST=127.0.0.1
+Environment=PORT=18300
+Environment=OLLAMA_BASE_URL=http://127.0.0.1:11434
+Environment=WEBUI_AUTH=True
+Environment=ENABLE_OPENAI_API=False
+Environment=ANONYMIZED_TELEMETRY=False
+Environment=DO_NOT_TRACK=True
+Environment=SCARF_NO_ANALYTICS=True
+NoNewPrivileges=true
+LogDriver=journald
+PodmanArgs=--pull=never --uidmap=0:2500000:65536 --gidmap=0:2500000:65536 --memory=4g --pids-limit=512
+
+[Service]
+Restart=on-failure
+RestartSec=15
+TimeoutStartSec=300

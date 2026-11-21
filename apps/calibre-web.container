@@ -1,0 +1,28 @@
+# Offline application: Calibre-Web
+# Installed, started and removed with "sudo offline apps". The container's root user is
+# mapped to an unprivileged range on the host, it cannot gain privileges, and its port is
+# published on 127.0.0.1 only.
+
+[Unit]
+Description=Offline app: Calibre-Web
+Documentation=https://github.com/pbassill/offline
+After=network-online.target
+Wants=network-online.target
+
+[Container]
+ContainerName=offline-app-calibre-web
+Image=docker.io/linuxserver/calibre-web:0.6.26-ls386@sha256:6cf7dab48a4ae0ed3304a94670aa173a4e6b9714824ab6199dddaae3518e618d
+PublishPort=127.0.0.1:18420:8083
+Volume=/srv/offline/apps/calibre-web/config:/config:U
+Volume=/srv/offline/apps/calibre-web/books:/books:U
+Environment=PUID=1000
+Environment=PGID=1000
+Environment=TZ=Etc/UTC
+NoNewPrivileges=true
+LogDriver=journald
+PodmanArgs=--pull=never --uidmap=0:2000000:65536 --gidmap=0:2000000:65536 --memory=512m --pids-limit=512
+
+[Service]
+Restart=on-failure
+RestartSec=15
+TimeoutStartSec=300

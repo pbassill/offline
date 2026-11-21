@@ -1,0 +1,23 @@
+# Offline application: MeshCore Web
+# Installed, started and removed with "sudo offline apps". The container's root user is
+# mapped to an unprivileged range on the host, it cannot gain privileges, and its port is
+# published on 127.0.0.1 only.
+
+[Unit]
+Description=Offline app: MeshCore Web
+Documentation=https://github.com/pbassill/offline
+After=network-online.target
+Wants=network-online.target
+
+[Container]
+ContainerName=offline-app-meshcore-web
+Image=ghcr.io/axistem-dev/meshcore-web:v1.45.0@sha256:ec2a7d5581bd09316aeea92e00c00b253cff6c7f89108204e9b22d9a679e12ab
+PublishPort=127.0.0.1:18500:80
+NoNewPrivileges=true
+LogDriver=journald
+PodmanArgs=--pull=never --uidmap=0:1400000:65536 --gidmap=0:1400000:65536 --memory=128m --pids-limit=512
+
+[Service]
+Restart=on-failure
+RestartSec=15
+TimeoutStartSec=300
